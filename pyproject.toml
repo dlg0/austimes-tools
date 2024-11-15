@@ -1,0 +1,13 @@
+[project]
+name = "austimes-tools"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "click>=8.1.7",
+    "ipykernel>=6.29.5",
+    "loguru>=0.7.2",
+    "openpyxl>=3.1.5",
+    "pandas>=2.2.3",
+]
