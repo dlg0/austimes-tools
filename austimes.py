@@ -120,6 +120,10 @@ def load_luto_data():
     # Drop duplicates
     veda_max_value_df = veda_max_value_df.drop_duplicates()
 
+    # Move hurdle rate to the front and add an empty column after it
+    veda_max_value_df = veda_max_value_df[["Hurdle Rate", "Carbon Price", "Max Sequestration"]]
+    veda_max_value_df.insert(1, " ", "")
+
     # Create a new table for the VEDA_SHAPE values
     veda_shape_df = result_diff_df[["Carbon Price", "Hurdle Rate", "SHAPE_Year", "SHAPE"]].copy()
 
