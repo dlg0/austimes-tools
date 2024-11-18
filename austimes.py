@@ -3,7 +3,7 @@ import pandas as pd
 import re
 import click
 from loguru import logger
-
+import plotly.express as px
 
 @click.command()
 def load_luto_data():
@@ -154,6 +154,10 @@ def load_luto_data():
         veda_max_value_df.to_excel(writer, sheet_name="VEDA_Max_Sequestration", index=False)
     click.echo(f"Data processed and saved to {output_file}")
 
+
+    # Plot (using plotly) a stacked area chart, faceted by the hurdle rate, of the result_diff_df sequestration values
+    fig = px.area(result_diff_df, x="Year", y="Sequestration [MtCO2e]", color="Carbon Price", facet_row="Hurdle Rate")
+    fig.show()
 
 if __name__ == "__main__":
     load_luto_data()
