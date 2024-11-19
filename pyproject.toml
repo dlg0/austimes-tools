@@ -1,7 +1,7 @@
 [project]
 name = "austimes-tools"
 version = "0.1.0"
-description = "Add your description here"
+description = "A collection of data processing utilities for Austimes"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -12,3 +12,10 @@ dependencies = [
     "pandas>=2.2.3",
     "plotly>=5.24.1",
 ]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project.scripts]
+austimes-tools = "austimes_tools.cli:cli"

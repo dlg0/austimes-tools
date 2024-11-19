@@ -6,9 +6,11 @@ from loguru import logger
 import plotly.express as px
 
 @click.command()
-def load_luto_data():
-    input_dir = "data/luto/20241010"
-    output_dir = "output"
+@click.option('--input-dir', default="data/luto/20241010", help="Input directory containing LUTO Excel files")
+@click.option('--output-dir', default="output", help="Output directory for processed data")
+def load_luto_data(input_dir, output_dir):
+    """Process LUTO Excel files and generate visualization."""
+    # Replace the hardcoded paths with the parameters
     os.makedirs(output_dir, exist_ok=True)
 
     output_file = os.path.join(output_dir, "luto_processed_data.xlsx")
