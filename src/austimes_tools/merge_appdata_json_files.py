@@ -5,6 +5,8 @@ import click
 import xml.parsers.expat
 from tabulate import tabulate
 from loguru import logger
+import os
+import shutil
 
 # Configure logger
 logger.remove()  # Remove default handler
@@ -12,11 +14,11 @@ logger.add("merge_appdata_json_files.log", rotation="10 MB", level="INFO")
 
 def merge_appdata_json_files(from_dir, prefix, into, confirm_merge=False, show_views=False):
     """Merge AppData JSON files from one directory into another."""
-    source_dir = Path(from_dir)
-    target_dir = Path(into)
+    from_dir = Path(from_dir)
+    into_dir = Path(into)
     
     if show_views:
-        show_views_comparison(source_dir, target_dir, prefix)
+        show_views_comparison(from_dir, into_dir, prefix)
         return
     
     # Define the file pairs to process
@@ -38,10 +40,10 @@ def merge_appdata_json_files(from_dir, prefix, into, confirm_merge=False, show_v
     files_to_format = []
     for pair in file_pairs:
         files_to_format.extend([
-            target_dir / pair['views'],
-            target_dir / pair['details'],
-            source_dir / f"{prefix}{pair['views']}",
-            source_dir / f"{prefix}{pair['details']}"
+            into_dir / pair['views'],
+            into_dir / pair['details'],
+            from_dir / f"{prefix}{pair['views']}",
+            from_dir / f"{prefix}{pair['details']}"
         ])
     
     for file in files_to_format:
@@ -51,21 +53,21 @@ def merge_appdata_json_files(from_dir, prefix, into, confirm_merge=False, show_v
     # Process each pair
     for pair in file_pairs:
         print(f"\nProcessing {pair['type']}...")
-        target_views = target_dir / pair['views']
-        target_details = target_dir / pair['details']
+        base_views = into_dir / pair['views']
+        base_details = into_dir / pair['details']
         
         # Get new paired entries
         views_entries, details_entries = get_new_paired_entries(
-            source_dir, target_dir, prefix, pair['views'], pair['details']
+            prefix, from_dir, pair['views'], pair['details']
         )
         
         # Preview new entries
         if preview_new_entries(views_entries, details_entries, pair['type']):
             if confirm_merge:
                 # Merge views
-                merge_json_files(views_entries, str(target_views))
+                merge_json_files(views_entries, str(base_views))
                 # Merge details
-                merge_json_files(details_entries, str(target_details))
+                merge_json_files(details_entries, str(base_details))
             else:
                 print("\nPreview mode: Use --confirm-merge to execute the merge operation")
 
@@ -171,28 +173,28 @@ def preview_new_entries(views_entries, details_entries, type):
     
     return bool(views_entries)
 
-def get_new_paired_entries(source_dir, target_dir, prefix, views_file, details_file):
+def get_new_paired_entries(prefix, appdata_dir, views_file, details_file):
     """Find new entries in views that have matching entries in details."""
-    target_views_path = target_dir / views_file
-    target_details_path = target_dir / details_file
-    source_views_path = source_dir / f"{prefix}{views_file}"
-    source_details_path = source_dir / f"{prefix}{details_file}"
+    base_views_path = appdata_dir / views_file
+    base_details_path = appdata_dir / details_file
+    prefixed_views_path = appdata_dir / f"{prefix}{views_file}"
+    prefixed_details_path = appdata_dir / f"{prefix}{details_file}"
     
     try:
-        print(f"\nReading source views: {source_views_path}")
-        print(f"Reading source details: {source_details_path}")
-        print(f"Reading target views: {target_views_path}")
-        print(f"Reading target details: {target_details_path}")
+        print(f"\nReading source views: {prefixed_views_path}")
+        print(f"Reading source details: {prefixed_details_path}")
+        print(f"Reading target views: {base_views_path}")
+        print(f"Reading target details: {base_details_path}")
         
         # Get new entries using the existing function
-        views_entries = get_new_entries(source_views_path, target_views_path)
+        views_entries = get_new_entries(prefixed_views_path, base_views_path)
         
         # Load details file to match with new views
-        with open(source_details_path, 'r', encoding='utf-8') as f:
-            source_details = json.load(f)
+        with open(prefixed_details_path, 'r', encoding='utf-8') as f:
+            prefixed_details = json.load(f)
             
         # Create lookup for details
-        details_lookup = {item['Name']: item for item in source_details}
+        details_lookup = {item['Name']: item for item in prefixed_details}
         
         # Match views with details
         views_to_merge = []
@@ -296,6 +298,23 @@ def show_views_comparison(from_dir: Path, into_dir: Path, prefix: str):
             print(f"\nSkipping {type_name} - Could not find required files")
         except json.JSONDecodeError as e:
             print(f"\nError: Invalid JSON in {type_name} file - {e}")
+
+def get_unique_backup_path(file_path: str) -> str:
+    """Generate a unique backup file path by adding a counter if needed."""
+    backup_path = f"{file_path}.bak"
+    counter = 1
+    
+    while os.path.exists(backup_path):
+        backup_path = f"{file_path}.bak.{counter}"
+        counter += 1
+    
+    return backup_path
+
+def backup_file(file_path: str) -> str:
+    """Create a backup of the file with a unique name."""
+    backup_path = get_unique_backup_path(file_path)
+    shutil.copy2(file_path, backup_path)
+    return backup_path
 
 @click.command()
 @click.argument('from_dir', type=click.Path(exists=True))
