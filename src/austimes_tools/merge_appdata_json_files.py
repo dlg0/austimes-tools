@@ -2,80 +2,61 @@ import json
 from pathlib import Path
 import xml.dom.minidom
 import click
+import xml.parsers.expat
+from tabulate import tabulate
 
 @click.command()
-@click.option('--appdata-dir', type=click.Path(exists=True), help="AppData directory containing JSON files")
-@click.option('--interactive/--non-interactive', default=True, help="Run in interactive mode")
-def merge_appdata_json_files(appdata_dir, interactive):
-    """Merge AppData JSON files for result views."""
-    if not appdata_dir:
-        script_dir = Path(__file__).parent
-        appdata_dir = script_dir.parent / 'AppData'
-    else:
-        appdata_dir = Path(appdata_dir)
+@click.argument('from_dir', type=click.Path(exists=True))
+@click.option('--prefix', type=str, default="",
+              help="Optional prefix of the ResultViews files to merge (e.g., 'Transport' for TransportResultViews.json)")
+@click.option('--into', type=click.Path(exists=True), default="./",
+              help="Target AppData directory to merge into (defaults to current directory)")
+@click.option('--confirm-merge', is_flag=True, 
+              help="Confirm and execute the merge operation. Without this flag, only preview mode is run")
+@click.option('--show-views', is_flag=True,
+              help="Show a comparison table of views present in source and target directories")
+def merge_appdata_json_files(from_dir, prefix, into, confirm_merge, show_views):
+    """Merge AppData JSON files from one directory into another.
+    
+    FROM_DIR is the source AppData directory containing the JSON files you want to merge from.
+    """
+    # Convert paths to Path objects
+    from_dir = Path(from_dir)
+    into_dir = Path(into)
+    
+    if show_views:
+        show_views_comparison(from_dir, into_dir, prefix)
+        return
     
     # Find all relevant JSON files, excluding the base files
-    base_views = appdata_dir / 'ResultViews.json'
-    base_details = appdata_dir / 'ResultViewsDetails.json'
-    
-    # Get all prefixed files (excluding base files and formatted versions)
-    prefixed_views = [f for f in appdata_dir.glob('*ResultViews.json') 
-                     if f != base_views and 'formatted' not in f.name]
-    
-    # Extract unique prefixes from the ResultViews files
-    prefixes = []
-    for file in prefixed_views:
-        prefix = file.name.replace('ResultViews.json', '')
-        if prefix:  # Only add non-empty prefixes
-            prefixes.append(prefix)
+    base_views = into_dir / 'ResultViews.json'
+    base_details = into_dir / 'ResultViewsDetails.json'
     
     # Format all source files first
     print("\nFormatting all source files...")
-    files_to_format = [base_views, base_details]
-    for prefix in prefixes:
-        files_to_format.extend([
-            appdata_dir / f"{prefix}ResultViews.json",
-            appdata_dir / f"{prefix}ResultViewsDetails.json"
-        ])
+    files_to_format = [
+        base_views, 
+        base_details,
+        from_dir / f"{prefix}ResultViews.json",
+        from_dir / f"{prefix}ResultViewsDetails.json"
+    ]
     
     for file in files_to_format:
         if file.exists():
             format_json_file(file)
     
-    # Show available prefixes for merging
-    if not prefixes:
-        print("\nNo prefixed files found to merge.")
-        return
+    # Get new paired entries
+    views_entries, details_entries = get_new_paired_entries(prefix, from_dir)
     
-    print("\nAvailable file pairs:")
-    for i, prefix in enumerate(prefixes):
-        print(f"{i + 1}. {prefix}ResultViews.json and {prefix}ResultViewsDetails.json")
-    
-    # Get user selection
-    print("\nEnter the number of the file pair you want to merge or press Enter to skip:")
-    selection = input("File pair to merge: ").strip()
-    
-    if selection:
-        try:
-            idx = int(selection) - 1
-            if 0 <= idx < len(prefixes):
-                prefix = prefixes[idx]
-                
-                # Get new paired entries
-                views_entries, details_entries = get_new_paired_entries(prefix, appdata_dir)
-                
-                # Preview new entries
-                if preview_new_entries(views_entries, details_entries):
-                    proceed = input("\nProceed with merge? (y/n): ").lower().strip()
-                    if proceed == 'y':
-                        # Merge ResultViews
-                        merge_json_files(views_entries, str(base_views))
-                        # Merge ResultViewsDetails
-                        merge_json_files(details_entries, str(base_details))
-            else:
-                print("Invalid selection.")
-        except ValueError:
-            print("Invalid input. Please enter a number.")
+    # Preview new entries
+    if preview_new_entries(views_entries, details_entries):
+        if confirm_merge:
+            # Merge ResultViews
+            merge_json_files(views_entries, str(base_views))
+            # Merge ResultViewsDetails
+            merge_json_files(details_entries, str(base_details))
+        else:
+            print("\nPreview mode: Use --confirm-merge to execute the merge operation")
 
 def format_details_field(details_str):
     """Format the Details field which may contain JSON or XML content."""
@@ -96,7 +77,7 @@ def format_details_field(details_str):
         # If not JSON, try formatting as XML
         try:
             return format_xml_string(details_str)
-        except:
+        except xml.parsers.expat.ExpatError:
             # If neither JSON nor XML, return original string
             return details_str
 
@@ -109,7 +90,7 @@ def format_xml_string(xml_str):
         # Remove empty lines that minidom sometimes adds
         formatted_xml = '\n'.join([line for line in formatted_xml.split('\n') if line.strip()])
         return formatted_xml
-    except:
+    except xml.parsers.expat.ExpatError:
         return xml_str
 
 def format_json_file(file_path):
@@ -245,6 +226,44 @@ def merge_json_files(new_entries, target_file_path):
             
     except Exception as e:
         print(f"Error merging files: {e}")
+
+def show_views_comparison(from_dir: Path, into_dir: Path, prefix: str):
+    """Display a comparison table of views in source and target directories."""
+    try:
+        # Load source and target views
+        source_file = from_dir / f"{prefix}ResultViews.json"
+        target_file = into_dir / "ResultViews.json"
+        
+        with open(source_file, 'r', encoding='utf-8') as f:
+            source_views = {item['Name'] for item in json.load(f)}
+        with open(target_file, 'r', encoding='utf-8') as f:
+            target_views = {item['Name'] for item in json.load(f)}
+        
+        # Create comparison data
+        all_views = sorted(source_views | target_views)
+        table_data = []
+        for view in all_views:
+            source_mark = "✓" if view in source_views else ""
+            target_mark = "✓" if view in target_views else ""
+            table_data.append([view, source_mark, target_mark])
+        
+        # Print table
+        headers = ["View Name", "Source", "Target"]
+        print("\nViews Comparison:")
+        print(tabulate(table_data, headers=headers, tablefmt="grid"))
+        
+        # Print summary
+        only_in_source = source_views - target_views
+        only_in_target = target_views - source_views
+        print(f"\nSummary:")
+        print(f"  Views only in source: {len(only_in_source)}")
+        print(f"  Views only in target: {len(only_in_target)}")
+        print(f"  Views in both: {len(source_views & target_views)}")
+        
+    except FileNotFoundError as e:
+        print(f"Error: Could not find views file - {e}")
+    except json.JSONDecodeError as e:
+        print(f"Error: Invalid JSON in views file - {e}")
 
 if __name__ == "__main__":
     merge_appdata_json_files()
