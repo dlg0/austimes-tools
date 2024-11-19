@@ -16,11 +16,7 @@ from tabulate import tabulate
 @click.option('--show-views', is_flag=True,
               help="Show a comparison table of views present in source and target directories")
 def merge_appdata_json_files(from_dir, prefix, into, confirm_merge, show_views):
-    """Merge AppData JSON files from one directory into another.
-    
-    FROM_DIR is the source AppData directory containing the JSON files you want to merge from.
-    """
-    # Convert paths to Path objects
+    """Merge AppData JSON files from one directory into another."""
     from_dir = Path(from_dir)
     into_dir = Path(into)
     
@@ -28,35 +24,55 @@ def merge_appdata_json_files(from_dir, prefix, into, confirm_merge, show_views):
         show_views_comparison(from_dir, into_dir, prefix)
         return
     
-    # Find all relevant JSON files, excluding the base files
-    base_views = into_dir / 'ResultViews.json'
-    base_details = into_dir / 'ResultViewsDetails.json'
+    # Define the file pairs to process
+    file_pairs = [
+        {
+            'type': 'Results',
+            'views': 'ResultViews.json',
+            'details': 'ResultViewsDetails.json'
+        },
+        {
+            'type': 'Reports',
+            'views': 'ReportTables.json',
+            'details': 'ReportTablesDetails.json'
+        }
+    ]
     
     # Format all source files first
     print("\nFormatting all source files...")
-    files_to_format = [
-        base_views, 
-        base_details,
-        from_dir / f"{prefix}ResultViews.json",
-        from_dir / f"{prefix}ResultViewsDetails.json"
-    ]
+    files_to_format = []
+    for pair in file_pairs:
+        files_to_format.extend([
+            into_dir / pair['views'],
+            into_dir / pair['details'],
+            from_dir / f"{prefix}{pair['views']}",
+            from_dir / f"{prefix}{pair['details']}"
+        ])
     
     for file in files_to_format:
         if file.exists():
             format_json_file(file)
     
-    # Get new paired entries
-    views_entries, details_entries = get_new_paired_entries(prefix, from_dir)
-    
-    # Preview new entries
-    if preview_new_entries(views_entries, details_entries):
-        if confirm_merge:
-            # Merge ResultViews
-            merge_json_files(views_entries, str(base_views))
-            # Merge ResultViewsDetails
-            merge_json_files(details_entries, str(base_details))
-        else:
-            print("\nPreview mode: Use --confirm-merge to execute the merge operation")
+    # Process each pair
+    for pair in file_pairs:
+        print(f"\nProcessing {pair['type']}...")
+        base_views = into_dir / pair['views']
+        base_details = into_dir / pair['details']
+        
+        # Get new paired entries
+        views_entries, details_entries = get_new_paired_entries(
+            prefix, from_dir, pair['views'], pair['details']
+        )
+        
+        # Preview new entries
+        if preview_new_entries(views_entries, details_entries, pair['type']):
+            if confirm_merge:
+                # Merge views
+                merge_json_files(views_entries, str(base_views))
+                # Merge details
+                merge_json_files(details_entries, str(base_details))
+            else:
+                print("\nPreview mode: Use --confirm-merge to execute the merge operation")
 
 def format_details_field(details_str):
     """Format the Details field which may contain JSON or XML content."""
@@ -140,28 +156,25 @@ def get_new_entries(source_file, base_file):
         print(f"Error comparing files: {e}")
         return []
 
-def preview_new_entries(views_entries, details_entries):
+def preview_new_entries(views_entries, details_entries, type):
     """Show preview of new entries that would be merged."""
     if views_entries:
-        print("\nNew paired entries found:")
+        print(f"\nNew {type} entries found:")
         # Sort entries by Name before displaying
         sorted_entries = sorted(views_entries, key=lambda x: x['Name'])
         for entry in sorted_entries:
             print(f"  - {entry['Name']}")
     else:
-        print("\nNo new paired entries found to merge.")
+        print(f"\nNo new {type} entries found to merge.")
     
     return bool(views_entries)
 
-def get_new_paired_entries(prefix, appdata_dir):
-    """
-    Find new entries in ResultViews that have matching entries in ResultViewsDetails.
-    Returns tuple of (views_entries, details_entries) that are paired and ready to merge.
-    """
-    base_views_path = appdata_dir / "ResultViews.json"
-    base_details_path = appdata_dir / "ResultViewsDetails.json"
-    prefixed_views_path = appdata_dir / f"{prefix}ResultViews.json"
-    prefixed_details_path = appdata_dir / f"{prefix}ResultViewsDetails.json"
+def get_new_paired_entries(prefix, appdata_dir, views_file, details_file):
+    """Find new entries in views that have matching entries in details."""
+    base_views_path = appdata_dir / views_file
+    base_details_path = appdata_dir / details_file
+    prefixed_views_path = appdata_dir / f"{prefix}{views_file}"
+    prefixed_details_path = appdata_dir / f"{prefix}{details_file}"
     
     try:
         # Load all required files
@@ -229,6 +242,50 @@ def merge_json_files(new_entries, target_file_path):
 
 def show_views_comparison(from_dir: Path, into_dir: Path, prefix: str):
     """Display a comparison table of views in source and target directories."""
+    file_pairs = [
+        ('Results', 'ResultViews.json'),
+        ('Reports', 'ReportTables.json')
+    ]
+    
+    for type_name, filename in file_pairs:
+        try:
+            source_file = from_dir / f"{prefix}{filename}"
+            target_file = into_dir / filename
+            
+            with open(source_file, 'r', encoding='utf-8') as f:
+                source_views = {item['Name'] for item in json.load(f)}
+            with open(target_file, 'r', encoding='utf-8') as f:
+                target_views = {item['Name'] for item in json.load(f)}
+            
+            # Create comparison data
+            all_views = sorted(source_views | target_views)
+            table_data = []
+            for view in all_views:
+                source_mark = "✓" if view in source_views else ""
+                target_mark = "✓" if view in target_views else ""
+                table_data.append([view, source_mark, target_mark])
+            
+            # Print table
+            headers = ["View Name", "Source", "Target"]
+            print(f"\n{type_name} Views Comparison:")
+            print(tabulate(table_data, headers=headers, tablefmt="grid"))
+            
+            # Print summary
+            only_in_source = source_views - target_views
+            only_in_target = target_views - source_views
+            print(f"\nSummary:")
+            print(f"  Views only in source: {len(only_in_source)}")
+            print(f"  Views only in target: {len(only_in_target)}")
+            print(f"  Views in both: {len(source_views & target_views)}")
+            
+        except FileNotFoundError as e:
+            print(f"\nSkipping {type_name} - Could not find required files")
+        except json.JSONDecodeError as e:
+            print(f"\nError: Invalid JSON in {type_name} file - {e}")
+
+if __name__ == "__main__":
+    merge_appdata_json_files()
+
     try:
         # Load source and target views
         source_file = from_dir / f"{prefix}ResultViews.json"
