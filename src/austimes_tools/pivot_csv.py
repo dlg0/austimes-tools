@@ -2,6 +2,10 @@ import click
 import pandas as pd
 from pathlib import Path
 from loguru import logger
+import sys
+
+# initialise logger to screen
+logger.add(sys.stdout, level="INFO")
 
 @click.command()
 @click.argument('csv_path', type=click.Path(exists=True))
@@ -29,8 +33,8 @@ def pivot_csv(csv_path):
             
         # Pivot the dataframe
         logger.info("Pivoting dataframe")
-        cols_except_year = [col for col in df.columns if col != 'year']
-        df_wide = df.pivot(columns='year', values=cols_except_year[0])
+        index_cols = [col for col in df.columns if col not in ['year','val']]
+        df_wide = df.pivot(columns='year', values='val', index=index_cols)
         
         # Create output filename with -wide suffix
         output_path = file_path.parent / f"{file_path.stem}-wide{file_path.suffix}"
