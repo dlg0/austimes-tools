@@ -7,6 +7,7 @@ from tabulate import tabulate
 from loguru import logger
 import os
 import shutil
+from datetime import datetime
 
 # Configure logger
 logger.remove()  # Remove default handler
@@ -52,6 +53,20 @@ FILE_TYPES = {
     }
 }
 
+def get_current_timestamp():
+    """Get current timestamp in the required format."""
+    return datetime.now().strftime("%Y-%m-%d %H:%M")
+
+def update_timestamp(entries, type_info):
+    """Update timestamp field for entries based on their type."""
+    timestamp = get_current_timestamp()
+    time_field = "CreatedOn" if type_info['type'] == "Groups" else "EditedOn"
+    
+    for entry in entries:
+        entry[time_field] = timestamp
+    
+    return entries
+
 def merge_appdata_json_files(
     from_dir, 
     prefix, 
@@ -62,7 +77,8 @@ def merge_appdata_json_files(
     show_cases=False,
     show_groups=False,
     file_type=None,
-    username=None
+    username=None,
+    update_timestamp=False
 ):
     """Merge AppData JSON files from one directory into another."""
     from_dir = Path(from_dir)
@@ -90,21 +106,6 @@ def merge_appdata_json_files(
     else:
         file_types_to_process = FILE_TYPES
 
-    # Format all source files first
-    print("\nFormatting all source files...")
-    files_to_format = []
-    for type_info in file_types_to_process.values():
-        files_to_format.append(into_dir / type_info['files']['views'])
-        if type_info['has_details']:
-            files_to_format.append(into_dir / type_info['files']['details'])
-        files_to_format.append(from_dir / f"{prefix}{type_info['files']['views']}")
-        if type_info['has_details']:
-            files_to_format.append(from_dir / f"{prefix}{type_info['files']['details']}")
-
-    for file in files_to_format:
-        if file.exists():
-            format_json_file(file)
-
     # Process each type
     for type_key, type_info in file_types_to_process.items():
         print(f"\nProcessing {type_info['type']}...")
@@ -112,12 +113,10 @@ def merge_appdata_json_files(
 
         if type_info['has_details']:
             base_details = into_dir / type_info['files']['details']
-            # Get new paired entries
             views_entries, details_entries = get_new_paired_entries(
                 prefix, from_dir, type_info['files']['views'], type_info['files']['details']
             )
         else:
-            # Get new unpaired entries
             views_entries = get_new_entries(
                 from_dir / f"{prefix}{type_info['files']['views']}", 
                 base_views,
@@ -130,14 +129,21 @@ def merge_appdata_json_files(
         if type_info['has_details']:
             if preview_new_entries(views_entries, details_entries, type_info['type']):
                 if confirm_merge:
-                    merge_json_files(views_entries, str(base_views))
-                    merge_json_files(details_entries, str(base_details))
+                    merge_json_files(views_entries, str(base_views), 
+                                   type_info=type_info, 
+                                   update_timestamp_flag=update_timestamp)
+                    merge_json_files(details_entries, str(base_details), 
+                                   type_info=type_info, 
+                                   update_timestamp_flag=update_timestamp)
                 else:
                     print("\nPreview mode: Use --confirm-merge to execute the merge operation")
         else:
             if preview_new_entries(views_entries, None, type_info['type']):
                 if confirm_merge:
-                    merge_json_files(views_entries, str(base_views), name_field=type_info['name_field'])
+                    merge_json_files(views_entries, str(base_views), 
+                                   name_field=type_info['name_field'],
+                                   type_info=type_info, 
+                                   update_timestamp_flag=update_timestamp)
                 else:
                     print("\nPreview mode: Use --confirm-merge to execute the merge operation")
 
@@ -313,7 +319,7 @@ def get_new_paired_entries(prefix, appdata_dir, views_file, details_file):
         print(f"Unexpected error: {e}")
         return [], []
 
-def merge_json_files(new_entries, target_file_path, name_field="Name"):
+def merge_json_files(new_entries, target_file_path, name_field="Name", type_info=None, update_timestamp_flag=False):
     """Merge new entries into target file."""
     try:
         target_path = Path(target_file_path)
@@ -326,6 +332,10 @@ def merge_json_files(new_entries, target_file_path, name_field="Name"):
         # Read target file
         with open(target_file_path, "r", encoding="utf-8") as f:
             target_data = json.load(f)
+
+        # Update timestamps if requested and this is a views file (not details)
+        if update_timestamp_flag and type_info and not type_info['files']['views'].endswith('Details.json'):
+            new_entries = update_timestamp(new_entries, type_info)
 
         # Add new entries and sort by name and username
         target_data.extend(new_entries)
@@ -456,6 +466,11 @@ def backup_file(file_path: str) -> str:
     type=str,
     help="Filter operations to only include entries for a specific username",
 )
+@click.option(
+    "--update-timestamp",
+    is_flag=True,
+    help="Update the timestamp of merged entries to current date/time",
+)
 def merge_appdata_json_files_cli(
     from_dir, 
     prefix, 
@@ -466,7 +481,8 @@ def merge_appdata_json_files_cli(
     show_cases,
     show_groups,
     file_type,
-    username
+    username,
+    update_timestamp
 ):
     """Merge AppData JSON files from one directory into another.
 
@@ -482,7 +498,8 @@ def merge_appdata_json_files_cli(
         show_cases,
         show_groups,
         file_type,
-        username
+        username,
+        update_timestamp
     )
 
 if __name__ == "__main__":
