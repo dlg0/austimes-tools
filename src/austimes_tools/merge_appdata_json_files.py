@@ -12,72 +12,134 @@ import shutil
 logger.remove()  # Remove default handler
 logger.add("merge_appdata_json_files.log", rotation="10 MB", level="INFO")
 
+# Update file_pairs to include all types
+FILE_TYPES = {
+    "results": {
+        "type": "Results",
+        "files": {
+            "views": "ResultViews.json",
+            "details": "ResultViewsDetails.json"
+        },
+        "has_details": True,
+        "name_field": "Name"
+    },
+    "reports": {
+        "type": "Reports",
+        "files": {
+            "views": "ReportTables.json",
+            "details": "ReportTablesDetails.json"
+        },
+        "has_details": True,
+        "name_field": "Name"
+    },
+    "cases": {
+        "type": "Cases",
+        "files": {
+            "views": "Cases.json",
+            "details": None
+        },
+        "has_details": False,
+        "name_field": "Name"
+    },
+    "groups": {
+        "type": "Groups",
+        "files": {
+            "views": "Groups.json",
+            "details": None
+        },
+        "has_details": False,
+        "name_field": "GroupName"
+    }
+}
 
 def merge_appdata_json_files(
-    from_dir, prefix, into, confirm_merge=False, show_views=False
+    from_dir, 
+    prefix, 
+    into, 
+    confirm_merge=False, 
+    show_results=False,
+    show_reports=False,
+    show_cases=False,
+    show_groups=False,
+    file_type=None,
+    username=None
 ):
     """Merge AppData JSON files from one directory into another."""
     from_dir = Path(from_dir)
     into_dir = Path(into)
 
-    if show_views:
-        show_views_comparison(from_dir, into_dir, prefix)
+    # Handle show comparisons
+    if any([show_results, show_reports, show_cases, show_groups]):
+        if show_results:
+            show_type_comparison(from_dir, into_dir, prefix, FILE_TYPES['results'], username)
+        if show_reports:
+            show_type_comparison(from_dir, into_dir, prefix, FILE_TYPES['reports'], username)
+        if show_cases:
+            show_type_comparison(from_dir, into_dir, prefix, FILE_TYPES['cases'], username)
+        if show_groups:
+            show_type_comparison(from_dir, into_dir, prefix, FILE_TYPES['groups'], username)
         return
 
-    # Define the file pairs to process
-    file_pairs = [
-        {
-            "type": "Results",
-            "views": "ResultViews.json",
-            "details": "ResultViewsDetails.json",
-        },
-        {
-            "type": "Reports",
-            "views": "ReportTables.json",
-            "details": "ReportTablesDetails.json",
-        },
-    ]
+    # Filter file types if specified
+    file_types_to_process = {}
+    if file_type:
+        if file_type not in FILE_TYPES:
+            print(f"Error: Unknown file type '{file_type}'. Valid types are: {', '.join(FILE_TYPES.keys())}")
+            return
+        file_types_to_process = {file_type: FILE_TYPES[file_type]}
+    else:
+        file_types_to_process = FILE_TYPES
 
     # Format all source files first
     print("\nFormatting all source files...")
     files_to_format = []
-    for pair in file_pairs:
-        files_to_format.extend(
-            [
-                into_dir / pair["views"],
-                into_dir / pair["details"],
-                from_dir / f"{prefix}{pair['views']}",
-                from_dir / f"{prefix}{pair['details']}",
-            ]
-        )
+    for type_info in file_types_to_process.values():
+        files_to_format.append(into_dir / type_info['files']['views'])
+        if type_info['has_details']:
+            files_to_format.append(into_dir / type_info['files']['details'])
+        files_to_format.append(from_dir / f"{prefix}{type_info['files']['views']}")
+        if type_info['has_details']:
+            files_to_format.append(from_dir / f"{prefix}{type_info['files']['details']}")
 
     for file in files_to_format:
         if file.exists():
             format_json_file(file)
 
-    # Process each pair
-    for pair in file_pairs:
-        print(f"\nProcessing {pair['type']}...")
-        base_views = into_dir / pair["views"]
-        base_details = into_dir / pair["details"]
+    # Process each type
+    for type_key, type_info in file_types_to_process.items():
+        print(f"\nProcessing {type_info['type']}...")
+        base_views = into_dir / type_info['files']['views']
 
-        # Get new paired entries
-        views_entries, details_entries = get_new_paired_entries(
-            prefix, from_dir, pair["views"], pair["details"]
-        )
+        if type_info['has_details']:
+            base_details = into_dir / type_info['files']['details']
+            # Get new paired entries
+            views_entries, details_entries = get_new_paired_entries(
+                prefix, from_dir, type_info['files']['views'], type_info['files']['details']
+            )
+        else:
+            # Get new unpaired entries
+            views_entries = get_new_entries(
+                from_dir / f"{prefix}{type_info['files']['views']}", 
+                base_views,
+                name_field=type_info['name_field'],
+                username=username
+            )
+            details_entries = None
 
-        # Preview new entries
-        if preview_new_entries(views_entries, details_entries, pair["type"]):
-            if confirm_merge:
-                # Merge views
-                merge_json_files(views_entries, str(base_views))
-                # Merge details
-                merge_json_files(details_entries, str(base_details))
-            else:
-                print(
-                    "\nPreview mode: Use --confirm-merge to execute the merge operation"
-                )
-
+        # Preview and merge
+        if type_info['has_details']:
+            if preview_new_entries(views_entries, details_entries, type_info['type']):
+                if confirm_merge:
+                    merge_json_files(views_entries, str(base_views))
+                    merge_json_files(details_entries, str(base_details))
+                else:
+                    print("\nPreview mode: Use --confirm-merge to execute the merge operation")
+        else:
+            if preview_new_entries(views_entries, None, type_info['type']):
+                if confirm_merge:
+                    merge_json_files(views_entries, str(base_views), name_field=type_info['name_field'])
+                else:
+                    print("\nPreview mode: Use --confirm-merge to execute the merge operation")
 
 def format_details_field(details_str):
     """Format the Details field which may contain JSON or XML content."""
@@ -102,7 +164,6 @@ def format_details_field(details_str):
             # If neither JSON nor XML, return original string
             return details_str
 
-
 def format_xml_string(xml_str):
     """Format XML string with proper indentation."""
     try:
@@ -116,7 +177,6 @@ def format_xml_string(xml_str):
         return formatted_xml
     except xml.parsers.expat.ExpatError:
         return xml_str
-
 
 def format_json_file(file_path):
     """Format and sort a JSON file, saving a formatted version with '-formatted' suffix."""
@@ -148,8 +208,7 @@ def format_json_file(file_path):
     except Exception as e:
         print(f"Unexpected error formatting {file_path}: {e}")
 
-
-def get_new_entries(source_file, base_file):
+def get_new_entries(source_file, base_file, name_field="Name", username=None):
     """
     Compare source and base files to find new entries.
     Returns a list of new entries (those in source but not in base).
@@ -160,35 +219,45 @@ def get_new_entries(source_file, base_file):
         with open(base_file, "r", encoding="utf-8") as f:
             target_data = json.load(f)
 
-        # Create sets of names for quick comparison
-        target_names = {item["Name"] for item in target_data}
-        source_names = {item["Name"] for item in source_data}
-        new_entries = [item for item in source_data if item["Name"] not in target_names]
+        # Filter by username if specified
+        if username:
+            source_data = [item for item in source_data if item["UserName"] == username]
+            target_data = [item for item in target_data if item["UserName"] == username]
+
+        # Create composite keys (name + username) for comparison
+        target_keys = {(item[name_field], item["UserName"]) for item in target_data}
+        new_entries = [
+            item for item in source_data 
+            if (item[name_field], item["UserName"]) not in target_keys
+        ]
+
+        # Sort by name and username
+        new_entries.sort(key=lambda x: (x[name_field], x["UserName"]))
 
         logger.info(f"Comparing {source_file.name} with {base_file.name}")
         logger.info(f"Found {len(new_entries)} new entries")
-        logger.debug("Target names: {}", target_names)
-        logger.debug("New entries: {}", new_entries)
-
+        if username:
+            logger.info(f"Filtered by username: {username}")
+        
         return new_entries
     except Exception as e:
         logger.error(f"Error comparing files: {e}")
         return []
 
-
-def preview_new_entries(views_entries, details_entries, type):
+def preview_new_entries(views_entries, details_entries=None, type_name=""):
     """Show preview of new entries that would be merged."""
-    if views_entries:
-        print(f"\nNew {type} entries found:")
-        # Sort entries by Name before displaying
-        sorted_entries = sorted(views_entries, key=lambda x: x["Name"])
-        for entry in sorted_entries:
-            print(f"  - {entry['Name']}")
-    else:
-        print(f"\nNo new {type} entries found to merge.")
+    if not views_entries:
+        print(f"\nNo new {type_name} entries found to merge.")
+        return False
 
-    return bool(views_entries)
+    print(f"\nNew {type_name} entries found:")
+    # Use GroupName for Groups, Name for others
+    name_field = "GroupName" if type_name == "Groups" else "Name"
+    sorted_entries = sorted(views_entries, key=lambda x: (x[name_field], x["UserName"]))
+    for entry in sorted_entries:
+        print(f"  - {entry[name_field]} (User: {entry['UserName']})")
 
+    return True
 
 def get_new_paired_entries(prefix, appdata_dir, views_file, details_file):
     """Find new entries in views that have matching entries in details."""
@@ -244,29 +313,23 @@ def get_new_paired_entries(prefix, appdata_dir, views_file, details_file):
         print(f"Unexpected error: {e}")
         return [], []
 
-
-def merge_json_files(new_entries, target_file_path):
+def merge_json_files(new_entries, target_file_path, name_field="Name"):
     """Merge new entries into target file."""
     try:
         target_path = Path(target_file_path)
         print(f"\nMerging into target file: {target_path}")
 
         # Create backup
-        backup_path = (
-            target_path.parent / f"{target_path.stem}.backup{target_path.suffix}"
-        )
-        import shutil
-
-        shutil.copy2(target_path, backup_path)
+        backup_path = backup_file(str(target_path))
         print(f"Created backup file: {backup_path}")
 
         # Read target file
         with open(target_file_path, "r", encoding="utf-8") as f:
             target_data = json.load(f)
 
-        # Add new entries and sort
+        # Add new entries and sort by name and username
         target_data.extend(new_entries)
-        target_data.sort(key=lambda x: x["Name"])
+        target_data.sort(key=lambda x: (x[name_field], x["UserName"]))
 
         # Write merged result
         with open(target_file_path, "w", encoding="utf-8") as f:
@@ -277,47 +340,54 @@ def merge_json_files(new_entries, target_file_path):
     except Exception as e:
         print(f"Error merging files: {e}")
 
+def show_type_comparison(from_dir: Path, into_dir: Path, prefix: str, type_info: dict, username=None):
+    """Display a comparison table of entries in source and target directories for a specific type."""
+    try:
+        source_file = from_dir / f"{prefix}{type_info['files']['views']}"
+        target_file = into_dir / type_info['files']['views']
+        name_field = type_info['name_field']
 
-def show_views_comparison(from_dir: Path, into_dir: Path, prefix: str):
-    """Display a comparison table of views in source and target directories."""
-    file_pairs = [("Results", "ResultViews.json"), ("Reports", "ReportTables.json")]
+        with open(source_file, "r", encoding="utf-8") as f:
+            source_data = json.load(f)
+        with open(target_file, "r", encoding="utf-8") as f:
+            target_data = json.load(f)
 
-    for type_name, filename in file_pairs:
-        try:
-            source_file = from_dir / f"{prefix}{filename}"
-            target_file = into_dir / filename
+        # Filter by username if specified
+        if username:
+            source_data = [item for item in source_data if item["UserName"] == username]
+            target_data = [item for item in target_data if item["UserName"] == username]
 
-            with open(source_file, "r", encoding="utf-8") as f:
-                source_views = {item["Name"] for item in json.load(f)}
-            with open(target_file, "r", encoding="utf-8") as f:
-                target_views = {item["Name"] for item in json.load(f)}
+        # Create composite keys (name + username)
+        source_entries = {(item[name_field], item["UserName"]) for item in source_data}
+        target_entries = {(item[name_field], item["UserName"]) for item in target_data}
 
-            # Create comparison data
-            all_views = sorted(source_views | target_views)
-            table_data = []
-            for view in all_views:
-                source_mark = "✓" if view in source_views else ""
-                target_mark = "✓" if view in target_views else ""
-                table_data.append([view, source_mark, target_mark])
+        # Create comparison data
+        all_entries = sorted(source_entries | target_entries)
+        table_data = []
+        for name, user in all_entries:
+            source_mark = "✓" if (name, user) in source_entries else ""
+            target_mark = "✓" if (name, user) in target_entries else ""
+            table_data.append([name, user, source_mark, target_mark])
 
-            # Print table
-            headers = ["View Name", "Source", "Target"]
-            print(f"\n{type_name} Views Comparison:")
-            print(tabulate(table_data, headers=headers, tablefmt="grid"))
+        # Print table
+        headers = [f"{type_info['type']} Name", "User", "Source", "Target"]
+        print(f"\n{type_info['type']} Comparison:")
+        if username:
+            print(f"Filtered by username: {username}")
+        print(tabulate(table_data, headers=headers, tablefmt="grid"))
 
-            # Print summary
-            only_in_source = source_views - target_views
-            only_in_target = target_views - source_views
-            print(f"\nSummary:")
-            print(f"  Views only in source: {len(only_in_source)}")
-            print(f"  Views only in target: {len(only_in_target)}")
-            print(f"  Views in both: {len(source_views & target_views)}")
+        # Print summary
+        only_in_source = source_entries - target_entries
+        only_in_target = target_entries - source_entries
+        print(f"\nSummary:")
+        print(f"  Entries only in source: {len(only_in_source)}")
+        print(f"  Entries only in target: {len(only_in_target)}")
+        print(f"  Entries in both: {len(source_entries & target_entries)}")
 
-        except FileNotFoundError as e:
-            print(f"\nSkipping {type_name} - Could not find required files")
-        except json.JSONDecodeError as e:
-            print(f"\nError: Invalid JSON in {type_name} file - {e}")
-
+    except FileNotFoundError as e:
+        print(f"\nSkipping {type_info['type']} - Could not find required files")
+    except json.JSONDecodeError as e:
+        print(f"\nError: Invalid JSON in {type_info['type']} file - {e}")
 
 def get_unique_backup_path(file_path: str) -> str:
     """Generate a unique backup file path by adding a counter if needed."""
@@ -330,13 +400,11 @@ def get_unique_backup_path(file_path: str) -> str:
 
     return backup_path
 
-
 def backup_file(file_path: str) -> str:
     """Create a backup of the file with a unique name."""
     backup_path = get_unique_backup_path(file_path)
     shutil.copy2(file_path, backup_path)
     return backup_path
-
 
 @click.command()
 @click.argument("from_dir", type=click.Path(exists=True))
@@ -344,7 +412,7 @@ def backup_file(file_path: str) -> str:
     "--prefix",
     type=str,
     default="",
-    help="Optional prefix of the ResultViews files to merge (e.g., 'Transport' for TransportResultViews.json)",
+    help="Optional prefix of the files to merge (e.g., 'Transport' for TransportResultViews.json)",
 )
 @click.option(
     "--into",
@@ -358,17 +426,64 @@ def backup_file(file_path: str) -> str:
     help="Confirm and execute the merge operation. Without this flag, only preview mode is run",
 )
 @click.option(
-    "--show-views",
+    "--show-results",
     is_flag=True,
-    help="Show a comparison table of views present in source and target directories",
+    help="Show a comparison table of Results views in source and target directories",
 )
-def merge_appdata_json_files_cli(from_dir, prefix, into, confirm_merge, show_views):
+@click.option(
+    "--show-reports",
+    is_flag=True,
+    help="Show a comparison table of Reports in source and target directories",
+)
+@click.option(
+    "--show-cases",
+    is_flag=True,
+    help="Show a comparison table of Cases in source and target directories",
+)
+@click.option(
+    "--show-groups",
+    is_flag=True,
+    help="Show a comparison table of Groups in source and target directories",
+)
+@click.option(
+    "--type",
+    "file_type",
+    type=click.Choice(['results', 'reports', 'cases', 'groups'], case_sensitive=False),
+    help="Specify which type of files to merge (default: all types)",
+)
+@click.option(
+    "--username",
+    type=str,
+    help="Filter operations to only include entries for a specific username",
+)
+def merge_appdata_json_files_cli(
+    from_dir, 
+    prefix, 
+    into, 
+    confirm_merge, 
+    show_results,
+    show_reports,
+    show_cases,
+    show_groups,
+    file_type,
+    username
+):
     """Merge AppData JSON files from one directory into another.
 
     FROM_DIR is the source AppData directory containing the JSON files you want to merge from.
     """
-    merge_appdata_json_files(from_dir, prefix, into, confirm_merge, show_views)
-
+    merge_appdata_json_files(
+        from_dir, 
+        prefix, 
+        into, 
+        confirm_merge, 
+        show_results,
+        show_reports,
+        show_cases,
+        show_groups,
+        file_type,
+        username
+    )
 
 if __name__ == "__main__":
     import sys
@@ -380,6 +495,9 @@ if __name__ == "__main__":
         from_dir = Path("/Users/gre538/code/Model_Aus_TIMES/AppData")
         into_dir = Path("/Users/gre538/code/Model_Aus_TIMES_copy/AppData")
         prefix = ""
-        show_views = False
+        show_results = False
+        show_reports = False
+        show_cases = False
+        show_groups = False
         confirm_merge = False
-        merge_appdata_json_files(from_dir, prefix, into_dir, confirm_merge, show_views)
+        merge_appdata_json_files(from_dir, prefix, into_dir, confirm_merge, show_results, show_reports, show_cases, show_groups)
