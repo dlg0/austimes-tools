@@ -19,16 +19,16 @@ def pivot_file(file_path):
     try:
         # Convert to Path object
         file_path = Path(file_path)
-        
+
         # Read the file based on extension
         logger.info(f"Reading file: {file_path}")
-        if file_path.suffix.lower() == '.csv':
+        if file_path.suffix.lower() == ".csv":
             df = pl.read_csv(file_path)
             value_col = "val"
             # Drop 'val~den' column if it exists
             if "val~den" in df.columns:
                 df = df.drop("val~den")
-        elif file_path.suffix.lower() in ['.xlsx', '.xls']:
+        elif file_path.suffix.lower() in [".xlsx", ".xls"]:
             df = pl.read_excel(file_path)
             value_col = "value"
         else:
@@ -45,18 +45,14 @@ def pivot_file(file_path):
         # Pivot the dataframe
         logger.info("Pivoting dataframe")
         index_cols = [col for col in df.columns if col not in ["year", value_col]]
-        df_wide = df.pivot(
-            values=value_col,
-            index=index_cols,
-            columns="year"
-        )
+        df_wide = df.pivot(values=value_col, index=index_cols, columns="year")
 
         # Create output filename with -wide suffix
         output_path = file_path.parent / f"{file_path.stem}-wide{file_path.suffix}"
 
         # Save the pivoted dataframe in same format as input
         logger.info(f"Saving pivoted file to: {output_path}")
-        if file_path.suffix.lower() == '.csv':
+        if file_path.suffix.lower() == ".csv":
             df_wide.write_csv(output_path)
         else:
             df_wide.write_excel(output_path)

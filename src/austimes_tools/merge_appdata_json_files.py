@@ -149,7 +149,6 @@ def show_type_comparison(
             headers.append("New Timestamp")
         print(tabulate(table_data, headers=headers, tablefmt="grid"))
 
-
     except Exception as e:
         print(f"Error showing comparison: {e}")
 
@@ -195,11 +194,12 @@ def merge_appdata_json_files(
     show_initial_comparison(from_dir, into_dir, prefix)
 
     # Filter file types if specified
-    file_types_to_process = {file_type: FILE_TYPES[file_type]} if file_type else FILE_TYPES
+    file_types_to_process = (
+        {file_type: FILE_TYPES[file_type]} if file_type else FILE_TYPES
+    )
 
     # Process each type
     for type_key, type_info in file_types_to_process.items():
-
         # Get filtered entries
         source_data, target_data = get_filtered_entries(
             from_dir, into_dir, prefix, type_info, username, entry_name
@@ -407,7 +407,6 @@ def get_new_paired_entries(
     prefixed_details_path = appdata_dir / f"{prefix}{details_file}"
 
     try:
-
         # Get new entries using the existing function
         views_entries = get_new_entries(
             prefixed_views_path, base_views_path, entry_name=entry_name
@@ -450,6 +449,7 @@ def get_new_paired_entries(
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
         return [], []
+
 
 def merge_json_files(
     new_entries,
@@ -515,48 +515,48 @@ def backup_file(file_path: str) -> str:
 def show_initial_comparison(from_dir, into_dir, prefix):
     """Show a comparison table of all entries in source and target directories."""
     print("\nComparing entries in source and target directories:")
-    
+
     all_data = []
-    
+
     for type_key, type_info in FILE_TYPES.items():
         source_file = Path(from_dir) / f"{prefix}{type_info['files']['views']}"
-        target_file = Path(into_dir) / type_info['files']['views']
-        name_field = type_info['name_field']
-        
+        target_file = Path(into_dir) / type_info["files"]["views"]
+        name_field = type_info["name_field"]
+
         try:
-            with open(source_file, 'r', encoding='utf-8') as f:
+            with open(source_file, "r", encoding="utf-8") as f:
                 source_data = json.load(f)
-            with open(target_file, 'r', encoding='utf-8') as f:
+            with open(target_file, "r", encoding="utf-8") as f:
                 target_data = json.load(f)
-                
+
             # Create sets of (name, username) tuples for comparison
-            source_entries = {(item[name_field], item['UserName']) for item in source_data}
-            target_entries = {(item[name_field], item['UserName']) for item in target_data}
-            
+            source_entries = {
+                (item[name_field], item["UserName"]) for item in source_data
+            }
+            target_entries = {
+                (item[name_field], item["UserName"]) for item in target_data
+            }
+
             # Get all unique entries
             all_entries = source_entries | target_entries
-            
+
             # Add rows to table data
             for name, username in sorted(all_entries):
-                in_source = '✓' if (name, username) in source_entries else ' '
-                in_target = '✓' if (name, username) in target_entries else ' '
-                all_data.append([
-                    type_info['type'],
-                    name,
-                    username,
-                    in_source,
-                    in_target
-                ])
-                
+                in_source = "✓" if (name, username) in source_entries else " "
+                in_target = "✓" if (name, username) in target_entries else " "
+                all_data.append(
+                    [type_info["type"], name, username, in_source, in_target]
+                )
+
         except FileNotFoundError:
             print(f"Warning: Could not find {source_file} or {target_file}")
         except json.JSONDecodeError:
             print(f"Warning: Error parsing JSON in {source_file} or {target_file}")
-            
+
     # Print the table
-    headers = ['Type', 'Name', 'User', 'In Source', 'In Target']
-    print(tabulate(all_data, headers=headers, tablefmt='grid'))
-    
+    headers = ["Type", "Name", "User", "In Source", "In Target"]
+    print(tabulate(all_data, headers=headers, tablefmt="grid"))
+
 
 @click.command()
 @click.argument("from_dir", type=click.Path(exists=True))
