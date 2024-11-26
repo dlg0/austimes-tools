@@ -58,6 +58,15 @@ def update_timestamp(entries, type_info):
     return entries
 
 
+def preprocess_data(data, file_name):
+    """Ensure all entries have required fields and valid values."""
+    for item in data:
+        if "UserName" not in item:
+            #logger.warning(f"Entry from {file_name} has no UserName, setting to 'gre538'")
+            item["UserName"] = "gre538"
+    return data
+
+
 def get_filtered_entries(
     from_dir, into_dir, prefix, type_info, username=None, entry_name=None
 ):
@@ -68,9 +77,9 @@ def get_filtered_entries(
 
     # Load source and target data
     with open(source_file, "r", encoding="utf-8") as f:
-        source_data = json.load(f)
+        source_data = preprocess_data(json.load(f), source_file.name)
     with open(target_file, "r", encoding="utf-8") as f:
-        target_data = json.load(f)
+        target_data = preprocess_data(json.load(f), target_file.name)
 
     # Apply filters
     if username:
@@ -112,8 +121,9 @@ def show_type_comparison(
                 user,
                 "Merge",
                 current_timestamp,
-                new_timestamp if update_timestamp else "",
             ]
+            if update_timestamp:
+                row.append(new_timestamp)
             table_data.append(row)
 
         # Add entries to be updated
@@ -127,8 +137,9 @@ def show_type_comparison(
                 user,
                 "Update",
                 current_timestamp,
-                new_timestamp if update_timestamp else "",
             ]
+            if update_timestamp:
+                row.append(new_timestamp)
             table_data.append(row)
 
         # Sort the table data
@@ -144,7 +155,7 @@ def show_type_comparison(
             print(f"New timestamp will be: {new_timestamp}")
 
         # Always print the table, even if empty
-        headers = [f"{type_info['type']} Name", "User", "Action", "Current Timestamp"]
+        headers = ["Name", "User", "Action", "Current Timestamp"]
         if update_timestamp:
             headers.append("New Timestamp")
         print(tabulate(table_data, headers=headers, tablefmt="grid"))
@@ -172,100 +183,156 @@ def get_entries_to_update(
     return filtered_entries
 
 
+def load_and_preprocess_files(from_dir, into_dir, prefix, type_info):
+    """Load and preprocess both source and target files."""
+    source_file = from_dir / f"{prefix}{type_info['files']['views']}"
+    target_file = into_dir / type_info['files']['views']
+    
+    with open(source_file, "r", encoding="utf-8") as f:
+        source_data = preprocess_data(json.load(f), source_file.name)
+    with open(target_file, "r", encoding="utf-8") as f:
+        target_data = preprocess_data(json.load(f), target_file.name)
+        
+    return source_data, target_data, source_file, target_file
+
+
 def merge_appdata_json_files(
-    from_dir,
-    prefix,
-    into,
+    from_dir, 
+    prefix, 
+    into, 
     confirm_merge=False,
-    show_results=True,
-    show_reports=True,
-    show_cases=True,
-    show_groups=True,
-    file_type=None,
+    results_only=True,
+    reports_only=True,
+    cases_only=True,
+    groups_only=True,
     username=None,
     update_timestamp=False,
-    entry_name=None,
+    entry_name=None
 ):
     """Merge AppData JSON files from one directory into another."""
     from_dir = Path(from_dir)
     into_dir = Path(into)
 
-    # Always show initial comparison first
-    show_initial_comparison(from_dir, into_dir, prefix)
+    # Load all data upfront (only views files, not details)
+    loaded_data = {}
+    enabled_types = set()
+    
+    for type_key, type_info in FILE_TYPES.items():
+        # Skip types that aren't requested
+        if (
+            (type_key == "results" and not results_only) or
+            (type_key == "reports" and not reports_only) or
+            (type_key == "cases" and not cases_only) or
+            (type_key == "groups" and not groups_only)
+        ):
+            continue
+            
+        # Only load the views files
+        source_file = from_dir / f"{prefix}{type_info['files']['views']}"
+        target_file = into_dir / type_info['files']['views']
+        
+        with open(source_file, "r", encoding="utf-8") as f:
+            source_data = preprocess_data(json.load(f), source_file.name)
+        with open(target_file, "r", encoding="utf-8") as f:
+            target_data = preprocess_data(json.load(f), target_file.name)
+            
+        loaded_data[type_key] = (source_data, target_data, source_file, target_file)
+        enabled_types.add(type_key)
 
-    # Filter file types if specified
-    file_types_to_process = (
-        {file_type: FILE_TYPES[file_type]} if file_type else FILE_TYPES
-    )
+    # Show initial comparison using loaded data
+    show_initial_comparison(loaded_data)
 
-    # Process each type
-    for type_key, type_info in file_types_to_process.items():
-        # Get filtered entries
-        source_data, target_data = get_filtered_entries(
-            from_dir, into_dir, prefix, type_info, username, entry_name
+    # Process each enabled type
+    for type_key, type_info in FILE_TYPES.items():
+        if type_key not in enabled_types:
+            continue
+            
+        source_data, target_data, source_file, target_file = loaded_data[type_key]
+
+        # Filter the data based on username and entry_name
+        filtered_source = filter_data(source_data, type_info, username, entry_name)
+        filtered_target = filter_data(target_data, type_info, username, entry_name)
+
+        # Get entries to merge
+        views_to_merge = get_new_entries_from_data(
+            filtered_source,
+            filtered_target,
+            name_field=type_info["name_field"]
         )
-
-        # Get entries to merge (from source to target)
-        if type_info["has_details"]:
-            views_to_merge, details_to_merge = get_new_paired_entries(
-                prefix,
-                from_dir,
-                type_info["files"]["views"],
-                type_info["files"]["details"],
-                entry_name,
-            )
-        else:
-            views_to_merge = get_new_entries(
-                from_dir / f"{prefix}{type_info['files']['views']}",
-                into_dir / type_info["files"]["views"],
-                name_field=type_info["name_field"],
-                username=username,
-                entry_name=entry_name,
-            )
 
         # Get entries to update timestamps (in target)
         entries_to_update = (
-            []
-            if not update_timestamp
-            else get_entries_to_update(target_data, type_info, username, entry_name)
+            [] if not update_timestamp
+            else get_entries_to_update(filtered_target, type_info, username, entry_name)
         )
 
-        # Always show comparison table, even if empty
+        # Show comparison and perform merge
         show_type_comparison(
-            type_info,
-            views_to_merge,
-            entries_to_update,
-            username,
-            entry_name,
-            update_timestamp,
+            type_info, views_to_merge, entries_to_update,
+            username, entry_name, update_timestamp
         )
 
-        # Only perform merge if confirmed
         if confirm_merge:
-            # Perform the actual merge for this type
-            if type_info["has_details"]:
-                if views_to_merge:
-                    merge_json_files(
-                        views_to_merge,
-                        into_dir / type_info["files"]["views"],
-                        type_info["name_field"],
-                        type_info,
-                        update_timestamp,
-                    )
-                    merge_json_files(
-                        details_to_merge,
-                        into_dir / type_info["files"]["details"],
-                        type_info["name_field"],
-                    )
-            else:
-                if views_to_merge:
-                    merge_json_files(
-                        views_to_merge,
-                        into_dir / type_info["files"]["views"],
-                        type_info["name_field"],
-                        type_info,
-                        update_timestamp,
-                    )
+            perform_merge(
+                views_to_merge, 
+                from_dir,
+                into_dir,
+                prefix,
+                type_info, 
+                update_timestamp
+            )
+
+
+def filter_data(data, type_info, username=None, entry_name=None):
+    """Filter data based on username and entry_name."""
+    filtered = data.copy()
+    name_field = type_info["name_field"]
+    
+    if username:
+        filtered = [item for item in filtered if item["UserName"] == username]
+    if entry_name:
+        filtered = [item for item in filtered if item[name_field].lower() == entry_name.lower()]
+    
+    return filtered
+
+
+def get_new_entries_from_data(source_data, target_data, name_field="Name"):
+    """Compare source and target data to find new entries."""
+    target_keys = {(item[name_field], item["UserName"]) for item in target_data}
+    
+    new_entries = [
+        item for item in source_data
+        if (item[name_field], item["UserName"]) not in target_keys
+    ]
+    
+    return sorted(new_entries, key=lambda x: (x[name_field], x["UserName"]))
+
+
+def show_initial_comparison(loaded_data):
+    """Show a comparison table of all entries using pre-loaded data."""
+    print("\nComparing entries in source and target directories:")
+    all_data = []
+
+    for type_key, (source_data, target_data, source_file, target_file) in loaded_data.items():
+        type_info = FILE_TYPES[type_key]
+        name_field = type_info["name_field"]
+
+        # Create sets of (name, username) tuples for comparison
+        source_entries = {(item[name_field], item["UserName"]) for item in source_data}
+        target_entries = {(item[name_field], item["UserName"]) for item in target_data}
+        
+        # Get all unique entries
+        all_entries = source_entries | target_entries
+
+        # Add rows to table data
+        for name, username in sorted(all_entries):
+            in_source = "✓" if (name, username) in source_entries else " "
+            in_target = "✓" if (name, username) in target_entries else " "
+            all_data.append([type_info["type"], name, username, in_source, in_target])
+
+    # Print the table
+    headers = ["Type", "Name", "User", "In Source", "In Target"]
+    print(tabulate(all_data, headers=headers, tablefmt="grid"))
 
 
 def format_details_field(details_str):
@@ -346,29 +413,24 @@ def get_new_entries(
     """
     try:
         with open(source_file, "r", encoding="utf-8") as f:
-            source_data = json.load(f)
+            source_data = preprocess_data(json.load(f), source_file.name)
         with open(base_file, "r", encoding="utf-8") as f:
-            target_data = json.load(f)
-
-        # Filter by username if specified
-        if username:
-            source_data = [item for item in source_data if item["UserName"] == username]
-            target_data = [item for item in target_data if item["UserName"] == username]
-
-        # Filter by entry name if specified
-        if entry_name:
-            source_data = [
-                item for item in source_data if item[name_field] == entry_name
-            ]
-            target_data = [
-                item for item in target_data if item[name_field] == entry_name
-            ]
+            target_data = preprocess_data(json.load(f), base_file.name)
 
         # Create composite keys (name + username) for comparison
         target_keys = {(item[name_field], item["UserName"]) for item in target_data}
+        
+        # Filter source data
+        filtered_source = source_data
+        if username:
+            filtered_source = [item for item in filtered_source if item["UserName"] == username]
+        if entry_name:
+            filtered_source = [item for item in filtered_source if item[name_field].lower() == entry_name.lower()]
+
+        # Find new entries
         new_entries = [
             item
-            for item in source_data
+            for item in filtered_source
             if (item[name_field], item["UserName"]) not in target_keys
         ]
 
@@ -412,7 +474,7 @@ def get_new_paired_entries(
             prefixed_views_path, base_views_path, entry_name=entry_name
         )
 
-        # Load details file to match with new views
+        # Load details file to match wTrueith new views
         with open(prefixed_details_path, "r", encoding="utf-8") as f:
             prefixed_details = json.load(f)
 
@@ -459,38 +521,37 @@ def merge_json_files(
     update_timestamp_flag=False,
 ):
     """Merge new entries into target file."""
-    try:
-        target_path = Path(target_file_path)
-        print(f"\nMerging into target file: {target_path}")
+    #try:
+    target_path = Path(target_file_path)
+    print(f"\nMerging into target file: {target_path}")
 
-        # Create backup
-        backup_path = backup_file(str(target_path))
-        print(f"Created backup file: {backup_path}")
+    # Create backup
+    backup_path = backup_file(str(target_path))
+    print(f"Created backup file: {backup_path}")
 
-        # Read target file
-        with open(target_file_path, "r", encoding="utf-8") as f:
-            target_data = json.load(f)
+    # Read target file
+    with open(target_file_path, "r", encoding="utf-8") as f:
+        target_data = json.load(f)
 
-        # Update timestamps if requested and this is a views file (not details)
-        if (
-            update_timestamp_flag
-            and type_info
-            and not type_info["files"]["views"].endswith("Details.json")
-        ):
-            new_entries = update_timestamp(new_entries, type_info)
+    # Update timestamps if requested and this is a views file (not details)
+    if (
+        update_timestamp_flag
+        and type_info
+        and not type_info["files"]["views"].endswith("Details.json")
+    ):
+        new_entries = update_timestamp(new_entries, type_info)
 
-        # Add new entries and sort by name and username
-        target_data.extend(new_entries)
-        target_data.sort(key=lambda x: (x[name_field], x["UserName"]))
+    # Add new entries and sort by name and username
+    target_data.extend(new_entries)
+    target_data.sort(key=lambda x: (x[name_field], x.get("UserName", "")))
+    # Write merged result
+    with open(target_file_path, "w", encoding="utf-8") as f:
+        json.dump(target_data, f, indent=2, sort_keys=True)
 
-        # Write merged result
-        with open(target_file_path, "w", encoding="utf-8") as f:
-            json.dump(target_data, f, indent=2, sort_keys=True)
+    print(f"Successfully merged {len(new_entries)} new entries into: {target_path}")
 
-        print(f"Successfully merged {len(new_entries)} new entries into: {target_path}")
-
-    except Exception as e:
-        print(f"Error merging files: {e}")
+    #except Exception as e:
+    #    print(f"Error merging files: {e}")
 
 
 def get_unique_backup_path(file_path: str) -> str:
@@ -512,50 +573,55 @@ def backup_file(file_path: str) -> str:
     return backup_path
 
 
-def show_initial_comparison(from_dir, into_dir, prefix):
-    """Show a comparison table of all entries in source and target directories."""
-    print("\nComparing entries in source and target directories:")
+def perform_merge(views_entries, from_dir, into_dir, prefix, type_info, update_timestamp):
+    """Perform the actual merge operation, loading details files only when needed."""
+    if not views_entries:
+        return
 
-    all_data = []
+    # Merge views entries
+    target_views_path = into_dir / type_info['files']['views']
+    merge_json_files(
+        views_entries,
+        target_views_path,
+        type_info["name_field"],
+        type_info,
+        update_timestamp
+    )
 
-    for type_key, type_info in FILE_TYPES.items():
-        source_file = Path(from_dir) / f"{prefix}{type_info['files']['views']}"
-        target_file = Path(into_dir) / type_info["files"]["views"]
-        name_field = type_info["name_field"]
-
+    # If this type has details, handle them now
+    if type_info["has_details"] and type_info["files"]["details"]:
+        # Load source details file
+        source_details_path = from_dir / f"{prefix}{type_info['files']['details']}"
+        target_details_path = into_dir / type_info['files']['details']
+        
         try:
-            with open(source_file, "r", encoding="utf-8") as f:
-                source_data = json.load(f)
-            with open(target_file, "r", encoding="utf-8") as f:
-                target_data = json.load(f)
+            with open(source_details_path, "r", encoding="utf-8") as f:
+                source_details = json.load(f)
 
-            # Create sets of (name, username) tuples for comparison
-            source_entries = {
-                (item[name_field], item["UserName"]) for item in source_data
-            }
-            target_entries = {
-                (item[name_field], item["UserName"]) for item in target_data
-            }
+            # Find matching details entries based on name only
+            details_to_merge = []
+            source_details_dict = {item["Name"]: item for item in source_details}
+            
+            for view_entry in views_entries:
+                view_name = view_entry[type_info["name_field"]]  # Use the correct name field
+                if view_name in source_details_dict:
+                    details_to_merge.append(source_details_dict[view_name])
+                else:
+                    logger.warning(f"No matching details found for view: {view_name}")
 
-            # Get all unique entries
-            all_entries = source_entries | target_entries
-
-            # Add rows to table data
-            for name, username in sorted(all_entries):
-                in_source = "✓" if (name, username) in source_entries else " "
-                in_target = "✓" if (name, username) in target_entries else " "
-                all_data.append(
-                    [type_info["type"], name, username, in_source, in_target]
+            # Merge details entries if any were found
+            if details_to_merge:
+                merge_json_files(
+                    details_to_merge,
+                    target_details_path,
+                    "Name",
+                    None,  # Don't pass type_info for details files
+                    False  # Don't update timestamps for details files
                 )
 
-        except FileNotFoundError:
-            print(f"Warning: Could not find {source_file} or {target_file}")
-        except json.JSONDecodeError:
-            print(f"Warning: Error parsing JSON in {source_file} or {target_file}")
-
-    # Print the table
-    headers = ["Type", "Name", "User", "In Source", "In Target"]
-    print(tabulate(all_data, headers=headers, tablefmt="grid"))
+        except Exception as e:
+            logger.error(f"Error processing details file: {e}")
+            raise
 
 
 @click.command()
@@ -578,35 +644,24 @@ def show_initial_comparison(from_dir, into_dir, prefix):
     help="Confirm and execute the merge operation. Without this flag, only preview mode is run",
 )
 @click.option(
-    "--show-all",
+    "--results-only",
     is_flag=True,
-    help="Show comparison tables for all file types",
+    help="Only process Results views",
 )
 @click.option(
-    "--show-results",
+    "--reports-only",
     is_flag=True,
-    help="Show a comparison table of Results views in source and target directories",
+    help="Only process Reports",
 )
 @click.option(
-    "--show-reports",
+    "--cases-only",
     is_flag=True,
-    help="Show a comparison table of Reports in source and target directories",
+    help="Only process Cases",
 )
 @click.option(
-    "--show-cases",
+    "--groups-only",
     is_flag=True,
-    help="Show a comparison table of Cases in source and target directories",
-)
-@click.option(
-    "--show-groups",
-    is_flag=True,
-    help="Show a comparison table of Groups in source and target directories",
-)
-@click.option(
-    "--type",
-    "file_type",
-    type=click.Choice(["results", "reports", "cases", "groups"], case_sensitive=False),
-    help="Specify which type of files to merge (default: all types)",
+    help="Only process Groups",
 )
 @click.option(
     "--username",
@@ -628,12 +683,10 @@ def merge_appdata_json_files_cli(
     prefix,
     into,
     confirm_merge,
-    show_all,
-    show_results,
-    show_reports,
-    show_cases,
-    show_groups,
-    file_type,
+    results_only,
+    reports_only,
+    cases_only,
+    groups_only,
     username,
     update_timestamp,
     entry_name,
@@ -642,26 +695,22 @@ def merge_appdata_json_files_cli(
 
     FROM_DIR is the source AppData directory containing the JSON files you want to merge from.
     """
-    # If show_all is True, set all show flags to True
-    if show_all:
-        show_results = True
-        show_reports = True
-        show_cases = True
-        show_groups = True
+    # If no specific type is selected, process all types
+    if not any([results_only, reports_only, cases_only, groups_only]):
+        results_only = reports_only = cases_only = groups_only = True
 
     merge_appdata_json_files(
         from_dir,
         prefix,
         into,
         confirm_merge,
-        show_results,
-        show_reports,
-        show_cases,
-        show_groups,
-        file_type,
-        username,
-        update_timestamp,
-        entry_name,
+        results_only,
+        reports_only,
+        cases_only,
+        groups_only,
+        username=username,
+        update_timestamp=update_timestamp,
+        entry_name=entry_name,
     )
 
 
@@ -672,21 +721,26 @@ if __name__ == "__main__":
         merge_appdata_json_files_cli()
     else:
         # For development testing, call the function directly
-        from_dir = Path("/Users/gre538/code/Model_Aus_TIMES/AppData")
-        into_dir = Path("/Users/gre538/code/Model_Aus_TIMES_copy/AppData")
+        from_dir = Path("/Users/gre538/code/Model_Aus_TIMES_copy/AppData")
+        into_dir = Path("/Users/gre538/code/Model_Aus_TIMES/AppData")
         prefix = ""
-        show_results = False
-        show_reports = False
-        show_cases = False
-        show_groups = False
-        confirm_merge = False
+        results_only = False
+        reports_only = True
+        cases_only = False
+        groups_only = False
+        confirm_merge = True
+        update_timestamp = False
+        entry_name = None
         merge_appdata_json_files(
             from_dir,
             prefix,
             into_dir,
             confirm_merge,
-            show_results,
-            show_reports,
-            show_cases,
-            show_groups,
+            results_only,
+            reports_only,
+            cases_only,
+            groups_only,
+            username=None,
+            update_timestamp=update_timestamp,
+            entry_name=entry_name,
         )
