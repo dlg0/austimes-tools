@@ -78,6 +78,9 @@ def create_msm22_csvs(input_file):
             if "study" in df.columns:
                 df.drop(columns=["study"], inplace=True)
 
+            # Drop any rows where year is < 2025
+            df = df[df["year"] >= 2025]
+
             # Rename source_p to source, sector_p to sector (if they exist)
             if "source_p" in df.columns:
                 df.rename(columns={"source_p": "source"}, inplace=True)
