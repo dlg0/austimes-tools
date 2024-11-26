@@ -1,4 +1,4 @@
-import click
+import rich_click as click
 from austimes_tools.load_luto_data import load_luto_data
 from austimes_tools.merge_appdata_json_files import merge_appdata_json_files_cli
 from austimes_tools.pivot_year import pivot_file
