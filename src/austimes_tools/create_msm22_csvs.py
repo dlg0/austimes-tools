@@ -35,6 +35,8 @@ SHEET_NAME_MAPPING = {
     "Hydrogen fuels": "MSM22 Hydrogen fuels",
 }
 
+# Add this near the top of the file with other imports
+pd.set_option('future.no_silent_downcasting', True)
 
 def process_msm22_files_logic(input_file: Path | str) -> None:
     """Process MSM22 files - creates CSVs and processes energy intensity files.
@@ -66,7 +68,7 @@ def process_msm22_files_logic(input_file: Path | str) -> None:
         df = df[df["year"] >= FIRST_YEAR]
 
         # Replace "-" with NaN
-        df = df.replace("-", np.nan).infer_objects(copy=False)
+        df = df.replace("-", np.nan)
 
         # Override fuel 
         if "fuel_override" in df.columns:
@@ -145,7 +147,7 @@ def process_msm22_files_logic(input_file: Path | str) -> None:
             sheet_name=sheet_name,
             skiprows=1
         )
-        df = df.replace("-", np.nan).infer_objects(copy=False)
+        df = df.replace("-", np.nan)
         # drop any rows where year is < 2025
         df = df[df["year"] >= FIRST_YEAR]
         # override the isp_subregion
@@ -194,12 +196,15 @@ def process_msm22_files_logic(input_file: Path | str) -> None:
             raise ValueError(f"Our data is longer than the template by {len(data_values) + 1 - max_row} rows. Please copy the formula down in columns M:P in the template and try again.")
 
     wb.save(output_file)
-
+    
     # use xlwings to open the file and force recalculation of formulas
-    import xlwings as xw
-    wb = xw.Book(output_file)
-    wb.save()
-    wb.close()
+    try:    
+        import xlwings as xw
+        wb = xw.Book(output_file)
+        wb.save()
+        wb.close()
+    except Exception as e:
+        logger.error(f"Failed to use xlwings to force recalculation of formulas - RUN IN A TERMINAL: {e}")
     
     logger.info(f"Created processed energy intensity file: {output_file}")
 
@@ -223,14 +228,21 @@ def process_msm22_files_logic(input_file: Path | str) -> None:
             usecols='A:Q',
             engine_kwargs={'data_only': True}
         )
+        # Drop and rows where IESTCS_Out is NaN or missing
+        df = df.dropna(subset=["IESTCS_Out"])
+
+        # Log the columns
+        logger.info(f"Columns: {df.columns.tolist()}")
+
+
+
         # Drop IESTCS_EnInt, IESTCS_Out, EnInt, PJ
-        emissions_df = df.drop(columns=["IESTCS_EnInt", "IESTCS_Out", "EnInt", "PJ"])
+        emissions_df = df[cols+["kt"]]
+
         # Group by cols and sum
         emissions_df = emissions_df.groupby(cols, as_index=False).sum()
-        # rename source_p to source and sector_p to sector
         emissions_df = emissions_df.rename(columns={"source_p": "source", "sector_p": "sector"})
         emissions_df.to_csv(output_path / f"{emissions_csv_name}.csv", index=False)
-
         # Create fin energy CSV
         logger.info(f"Creating fin energy CSV for {source_sheet}")
         if target_sheet == "Commercial FE with EnInt":
@@ -239,13 +251,10 @@ def process_msm22_files_logic(input_file: Path | str) -> None:
         else:
             cols = industry_cols 
             fin_energy_csv_name = "Final Energy Industry"
-        # Log the columns
-        logger.info(f"Columns: {df.columns.tolist()}")
-        # Drop IESTCS_EnInt, IESTCS_Out, EnInt, kt
-        fin_energy_df = df.drop(columns=["IESTCS_EnInt", "IESTCS_Out", "EnInt", "kt"])
+
+        fin_energy_df = df[cols+["PJ"]]
         # Group by cols and sum
         fin_energy_df = fin_energy_df.groupby(cols, as_index=False).sum()
-        # rename source_p to source and sector_p to sector
         fin_energy_df = fin_energy_df.rename(columns={"source_p": "source", "sector_p": "sector"})
         fin_energy_df.to_csv(output_path / f"{fin_energy_csv_name}.csv", index=False)
 
