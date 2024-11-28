@@ -8,6 +8,7 @@ from loguru import logger
 import os
 import shutil
 from datetime import datetime
+import orjson  # Add this to imports at top of file
 
 # Configure logger
 logger.remove()  # Remove default handler
@@ -341,73 +342,66 @@ def show_initial_comparison(loaded_data):
     print(tabulate(all_data, headers=headers, tablefmt="grid"))
 
 
-def format_details_field(details_str):
-    """Format the Details field which may contain JSON or XML content."""
-    # Remove escaped quotes and newlines if present
-    details_str = details_str.replace('\\"', '"').replace("\\r\\n", "\n")
-
-    # Try parsing as JSON first
-    try:
-        # If it's JSON-encoded string, parse it
-        data = json.loads(details_str)
-
-        # Check if there's a PivotLayout field that contains XML
-        if isinstance(data, dict) and "PivotLayout" in data:
-            data["PivotLayout"] = format_xml_string(data["PivotLayout"])
-
-        return json.dumps(data, indent=2)
-    except json.JSONDecodeError:
-        # If not JSON, try formatting as XML
+def format_nested_json(data):
+    """Recursively format any JSON strings found in the data structure."""
+    if isinstance(data, dict):
+        return {key: format_nested_json(value) for key, value in data.items()}
+    elif isinstance(data, list):
+        return [format_nested_json(item) for item in data]
+    elif isinstance(data, str):
         try:
-            return format_xml_string(details_str)
-        except xml.parsers.expat.ExpatError:
-            # If neither JSON nor XML, return original string
-            return details_str
+            # For Filter fields, log the attempt
+            is_filter = any(k == "Filter" for k, v in locals().items() if v is data)
+            
+            # Try to parse string as JSON
+            parsed = orjson.loads(data)
+            
+            # If successful and this is a Filter field, log success
+            if is_filter:
+                logger.info("Parse and format a Filter JSON field: SUCCESS")
+            
+            # Recursively format the parsed data
+            return orjson.dumps(
+                format_nested_json(parsed),
+                option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS
+            ).decode('utf-8')
+        except (orjson.JSONDecodeError, ValueError):
+            # If parsing failed and this is a Filter field, log the failure
+            if is_filter:
+                logger.warning("Parse and format a Filter JSON field: FAILED")
+            return data
+    else:
+        return data
 
-
-def format_xml_string(xml_str):
-    """Format XML string with proper indentation."""
+def format_json_file(file_path, in_place=False):
+    """Format and sort a JSON file, detecting and formatting any nested JSON strings."""
     try:
-        # Parse and format XML
-        dom = xml.dom.minidom.parseString(xml_str)
-        formatted_xml = dom.toprettyxml(indent="  ")
-        # Remove empty lines that minidom sometimes adds
-        formatted_xml = "\n".join(
-            [line for line in formatted_xml.split("\n") if line.strip()]
-        )
-        return formatted_xml
-    except xml.parsers.expat.ExpatError:
-        return xml_str
-
-
-def format_json_file(file_path):
-    """Format and sort a JSON file, saving a formatted version with '-formatted' suffix."""
-    try:
+        # Read the file
         with open(file_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+            data = orjson.loads(f.read())
 
-        # If data is a list and contains dictionaries with 'Name' field, sort by Name
+        # Sort by Name if applicable
         if isinstance(data, list) and all("Name" in item for item in data):
             data.sort(key=lambda x: x["Name"])
 
-        # If this is a ResultViewsDetails file, format the Details fields
-        if "ResultViewsDetails" in file_path.name:
-            for item in data:
-                if "Details" in item:
-                    item["Details"] = format_details_field(item["Details"])
+        # Recursively format any nested JSON strings
+        formatted_data = format_nested_json(data)
 
-        # Create formatted version
-        formatted_path = (
-            file_path.parent / f"{file_path.stem}-formatted{file_path.suffix}"
-        )
-        with open(formatted_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, sort_keys=True)
+        # Determine output path
+        output_path = file_path if in_place else file_path.parent / f"{file_path.stem}-formatted{file_path.suffix}"
+        
+        # Write the formatted JSON
+        with open(output_path, "wb") as f:
+            f.write(orjson.dumps(
+                formatted_data,
+                option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS
+            ))
 
-        print(f"Created formatted file: {formatted_path}")
-    except json.JSONDecodeError as e:
-        print(f"Error formatting {file_path}: {e}")
+        if not in_place:
+            print(f"Created formatted file: {output_path}")
+
     except Exception as e:
-        print(f"Unexpected error formatting {file_path}: {e}")
+        logger.error(f"Error formatting {file_path}: {e}")
 
 
 def get_new_entries(
@@ -601,6 +595,8 @@ def perform_merge(
         type_info,
         update_timestamp,
     )
+    # Format the merged file in place
+    format_json_file(target_views_path, in_place=True)
 
     # If this type has details, handle them now
     if type_info["has_details"] and type_info["files"]["details"]:
@@ -617,9 +613,7 @@ def perform_merge(
             source_details_dict = {item["Name"]: item for item in source_details}
 
             for view_entry in views_entries:
-                view_name = view_entry[
-                    type_info["name_field"]
-                ]  # Use the correct name field
+                view_name = view_entry[type_info["name_field"]]
                 if view_name in source_details_dict:
                     details_to_merge.append(source_details_dict[view_name])
                 else:
@@ -634,7 +628,8 @@ def perform_merge(
                     None,  # Don't pass type_info for details files
                     False,  # Don't update timestamps for details files
                 )
-
+                # Format the merged details file in place
+                format_json_file(target_details_path, in_place=True)
         except Exception as e:
             logger.error(f"Error processing details file: {e}")
             raise
