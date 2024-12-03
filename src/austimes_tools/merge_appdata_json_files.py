@@ -352,19 +352,19 @@ def format_nested_json(data):
         try:
             # For Filter fields, log the attempt
             is_filter = any(k == "Filter" for k, v in locals().items() if v is data)
-            
+
             # Try to parse string as JSON
             parsed = orjson.loads(data)
-            
+
             # If successful and this is a Filter field, log success
             if is_filter:
                 logger.info("Parse and format a Filter JSON field: SUCCESS")
-            
+
             # Recursively format the parsed data
             return orjson.dumps(
                 format_nested_json(parsed),
-                option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS
-            ).decode('utf-8')
+                option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS,
+            ).decode("utf-8")
         except (orjson.JSONDecodeError, ValueError):
             # If parsing failed and this is a Filter field, log the failure
             if is_filter:
@@ -372,6 +372,7 @@ def format_nested_json(data):
             return data
     else:
         return data
+
 
 def format_json_file(file_path, in_place=False):
     """Format and sort a JSON file, detecting and formatting any nested JSON strings."""
@@ -388,14 +389,19 @@ def format_json_file(file_path, in_place=False):
         formatted_data = format_nested_json(data)
 
         # Determine output path
-        output_path = file_path if in_place else file_path.parent / f"{file_path.stem}-formatted{file_path.suffix}"
-        
+        output_path = (
+            file_path
+            if in_place
+            else file_path.parent / f"{file_path.stem}-formatted{file_path.suffix}"
+        )
+
         # Write the formatted JSON
         with open(output_path, "wb") as f:
-            f.write(orjson.dumps(
-                formatted_data,
-                option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS
-            ))
+            f.write(
+                orjson.dumps(
+                    formatted_data, option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS
+                )
+            )
 
         if not in_place:
             print(f"Created formatted file: {output_path}")
