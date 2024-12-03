@@ -118,6 +118,16 @@ def calculate_fuel_switching_logic(file_path: Path | str) -> None:
 
         # TODO: It's the fuel override that indicates the fuel switching per fuel type process. 
 
+        # NOTES:
+        # - There is an increase or decrease in mt demand which changes energy demand
+        # - There is an increase or decrease in efficiency which changes energy demand
+        # - There are EE which further increase efficiency (fuel switch or not?)
+        # - There are ETI/IFL which reduce demand that would otherwise have to be met by something else
+        # - There are ETI/IFL which explicitly switches fuel. 
+        # - Why can't we just rely on the explict fuel switch? (apart from multiple techs)
+        # - What about hydrogen? Is that captured in the fuel switch?
+        # - Look at one fuel suffix at a time. 
+
         # Create a 2x1 subplot with the first plot showing fuel consumption and the second plot showing baseline energy demand
         fig = make_subplots(
             rows=2,
