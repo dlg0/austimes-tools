@@ -38,9 +38,12 @@ CSV_COLUMN_ORDER_MAPPING = {
     "Hydrogen capacity and generation": ["model", "study", "region", "year", "unit", "varbl", "process", "scen", "tech", "val"],
     "Hydrogen exports": ["model", "study", "region", "year", "unit", "varbl", "scen", "val"],
     "Hydrogen fuels": ["model", "study", "region", "year", "unit", "varbl", "process", "commodity", "fuel", "scen", "tech", "val"],
+    "IND2 fuel and feedstock": ["study","scen","region","isp_subregion","sector","fuel","commodity","unit","year","val"],
+    "IND2 emissions": ["study","scen","region","isp_subregion","sector","commodity","unit","year","val"],
     # These two match the columns in the FE_template.xlsx, not the final CSVs
     "Commercial FE with EnInt": ["sector_p", "scen", "region", "isp_subregion", "year", "enduse", "source_p", "buildingtype", "fuel", "fuel_override", "fuel_switched", "IESTCS_EnInt", "IESTCS_Out"],
     "Industry FE with EnInt": ["sector_p", "scen", "region", "isp_subregion", "year", "process", "source_p", "hydrogen_source", "fuel", "fuel_override", "subsectorgroup_c", "IESTCS_EnInt", "IESTCS_Out"],
+    
 }
 
 
@@ -68,6 +71,8 @@ SHEET_NAME_MAPPING = {
     "MSM22-ind2-emissions": "IND2 emissions",
     "MSM22 Commercial FE with EnInt": "Commercial FE with EnInt",
     "MSM22 Industry FE with EnInt": "Industry FE with EnInt",
+    "MSM22-ind2-emissions": "IND2 emissions",
+    "MSM22-ind2-fuel-and-feedstock": "IND2 fuel and feedstock",
 }
 
 # Add this near the top of the file with other imports
@@ -122,7 +127,6 @@ def process_msm22_csvs(input_dir: Path | str) -> None:
 
         for sheet_name in excel_file.sheet_names:
             if sheet_name == "Info":
-                logger.info(f"Skipping Info sheet")
                 continue
 
             logger.info(f"Processing sheet: {sheet_name}")
