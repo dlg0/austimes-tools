@@ -26,6 +26,15 @@ CSV_COLUMN_ORDER_MAPPING = {
     "Elec fuels": ["model", "study", "region", "isp_subregion", "year", "unit", "varbl", "fuel", "scen", "tech", "val"],
     "CO2 emissions - non bldg+ind": ["model", "region", "isp_subregion", "year", "unit", "emission_type", "enduse", "scen", "sector", "state", "subsector_p", "tech", "val"],
     "CO2 emissions - Industry - Process": ["region", "isp_subregion", "year", "unit", "ee_category", "endusegroup_p", "scen", "source", "val"],
+    "Elec capacity and generation": ["model", "study", "region", "isp_subregion", "year", "unit", "varbl", "fuel", "scen", "tech", "val"],
+    "EnEff Buildings": ["model", "study", "region", "isp_subregion","year", "unit", "varbl", "buildingtype", "ee_category", "enduse", "fuel", "scen", "source", "val"],
+    "EnEff Industry": ["model", "study", "region", "isp_subregion", "year", "unit", "varbl", "ee_category", "fuel", "nemreg", "scen", "source", "subsectorgroup_c", "val"],
+    "Fin Energy Residential": ["model", "study", "region", "isp_subregion", "year", "unit", "varbl", "enduse", "fuel", "fuel_switched", "scen", "source", "subsector_p", "val"],
+    "Fin energy Transport": ["region", "isp_subregion","year", "unit", "varbl", "enduse", "fuel", "scen", "subsector_p", "tech", "val"],
+    "Fuels switched industry": ["sector", "scen", "region", "isp_subregion", "year", "source", "subsectorgroup_c", "fuel_switched_from", "fuel_switched_to", "hydrogen_source", "PJ_switched"],
+    "Hydrogen capacity and generation": ["model", "study", "region", "year", "unit", "varbl", "process", "scen", "tech", "val"],
+    "Hydrogen exports": ["model", "study", "region", "year", "unit", "varbl", "scen", "val"],
+    "Hydrogen fuels": ["model", "study", "region", "year", "unit", "varbl", "process", "commodity", "fuel", "scen", "tech", "val"],
 }
 
 CSV_TO_FILTER_OUT_MAPPING = {
@@ -160,9 +169,13 @@ def process_msm22_csvs(input_dir: Path | str) -> None:
 
             # Check columns
             if not all(col in df.columns for col in column_order):
-                logger.error(f"Missing columns in {sheet_name}")
+                logger.error(f"Column mismatch in {sheet_name}:")
+                logger.error(f"Found columns: {sorted(list(df.columns))}")
+                logger.error(f"Expected columns: {sorted(column_order)}")
+                # list the missing columns
+                missing_cols = [col for col in column_order if col not in df.columns]
+                logger.error(f"Missing columns: {sorted(missing_cols)}")
                 continue
-
             # Reorder columns
             df = df[column_order]
 
