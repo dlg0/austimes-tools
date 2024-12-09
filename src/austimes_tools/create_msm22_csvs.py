@@ -371,18 +371,14 @@ def process_energy_intensity(input_dir: Path | str) -> None:
         emissions_df = df[cols + ["kt"]]
         emissions_df = emissions_df.fillna("-")
         emissions_df = emissions_df.groupby(cols, as_index=False).sum()
-        emissions_df = emissions_df.replace("-", None)
-        if not emissions_df.empty:
-            emissions_df.to_csv(output_path / f"{emissions_csv_name}.csv", index=False)
+        emissions_df.to_csv(output_path / f"{emissions_csv_name}.csv", index=False)
 
         # Create final energy CSV
         logger.info(f"Creating final energy CSV: {fin_energy_csv_name}")
         fin_energy_df = df[cols + ["PJ"]]
         fin_energy_df = fin_energy_df.fillna("-")
         fin_energy_df = fin_energy_df.groupby(cols, as_index=False).sum()
-        fin_energy_df = fin_energy_df.replace("-", None)
-        if not fin_energy_df.empty:
-            fin_energy_df.to_csv(output_path / f"{fin_energy_csv_name}.csv", index=False)
+        fin_energy_df.to_csv(output_path / f"{fin_energy_csv_name}.csv", index=False)
 
 @click.command()
 @click.argument("input_path", type=click.Path(exists=True))
