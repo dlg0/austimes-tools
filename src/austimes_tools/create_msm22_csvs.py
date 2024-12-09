@@ -46,7 +46,6 @@ CSV_COLUMN_ORDER_MAPPING = {
     
 }
 
-
 CSV_TO_FILTER_OUT_MAPPING = {
     "CO2 emissions - Industry - Process": [{"source":["-"]}],
 }
@@ -56,8 +55,8 @@ CSV_TO_FILTER_OUT_MAPPING = {
 SHEET_NAME_MAPPING = {
     "MSM22 CO2 emis-ind-proc": "CO2 emissions - Industry - Process",
     "MSM22 emis-non-bldg+ind": "CO2 emissions - non bldg+ind",
-    "MSM22 Commercial FE with EnInt": "Fin Energy Commercial",
-    "MSM22 Industry FE with EnInt": "Fin Energy Industry",
+    #"MSM22 Commercial FE with EnInt": "Fin Energy Commercial",
+    #"MSM22 Industry FE with EnInt": "Fin Energy Industry",
     "MSM22 Elec cap and gen": "Elec capacity and generation",
     "MSM22 Elec fuels": "Elec fuels",
     "MSM22 EnEff Buildings": "EnEff Buildings",
@@ -252,7 +251,7 @@ def process_energy_intensity(input_dir: Path | str) -> None:
     output_file = output_path / f"FE_processed_results.xlsx"
     shutil.copy2(TEMPLATE_PATH, Path(output_file).resolve())
 
-    # Read the processed CSVs
+    # Read the processed CSVs and put them into the template sheets
     processed_dfs = {}
     template_sheets = ["Commercial FE with EnInt", "Industry FE with EnInt"]
 
@@ -261,6 +260,23 @@ def process_energy_intensity(input_dir: Path | str) -> None:
         logger.info(f"Reading processed CSV: {csv_path}")
         df = pd.read_csv(csv_path)
         processed_dfs[sheet] = df
+
+    # Convert "-" to None
+    for sheet, df in processed_dfs.items():
+        processed_dfs[sheet] = processed_dfs[sheet].replace("-", None)
+
+    # ensure the IESTCS_EnInt and IESTCS_Out columns are floats
+    for sheet, df in processed_dfs.items():
+        processed_dfs[sheet]["IESTCS_EnInt"] = processed_dfs[sheet]["IESTCS_EnInt"].astype(float)
+        processed_dfs[sheet]["IESTCS_Out"] = processed_dfs[sheet]["IESTCS_Out"].astype(float)
+
+    ## We need to sort by the process, and then fuel column for industry, and enduse, then fuel for commercial
+    #for sheet, df in processed_dfs.items():
+    #    processed_dfs[sheet] = df.sort_values(by=["fuel"], ascending=False)
+    #    if sheet == "Industry FE with EnInt":
+    #        processed_dfs[sheet] = df.sort_values(by=["process"])
+    #    else:
+    #        processed_dfs[sheet] = df.sort_values(by=["enduse"])
 
     # Use openpyxl to update only the data cells while preserving formulas
     wb = load_workbook(output_file)
@@ -279,6 +295,7 @@ def process_energy_intensity(input_dir: Path | str) -> None:
     # Update the template with the CSV data
     for sheet, processed_df in processed_dfs.items():
         ws = wb[sheet]
+        max_row = ws.max_row
 
         # Convert DataFrame to values and update cells directly
         data_values = processed_df.values
@@ -288,7 +305,8 @@ def process_energy_intensity(input_dir: Path | str) -> None:
                     ws.cell(row=i + 2, column=j + 1, value=value)
 
         # Handle template row count
-        max_row = ws.max_row
+        logger.info(f"Max row: {max_row}")
+        logger.info(f"Data values length: {len(data_values)}")
         if max_row > len(data_values) + 1:
             rows_to_delete = max_row - (len(data_values) + 1)
             logger.info(f"Deleting {rows_to_delete} rows from the bottom")
@@ -324,14 +342,17 @@ def process_energy_intensity(input_dir: Path | str) -> None:
         df = df.dropna(subset=["IESTCS_Out"])
         logger.info(f"Columns in processed file: {df.columns.tolist()}")
 
-        # Get the correct column order from CSV_COLUMN_ORDER_MAPPING
-        cols = CSV_COLUMN_ORDER_MAPPING[sheet]
+        # rename sector_p to sector, source_p to source
+        df = df.rename(columns={"sector_p": "sector", "source_p": "source"})
+
         if sheet == "Commercial FE with EnInt":
             emissions_csv_name = "CO2 emissions Commercial"
             fin_energy_csv_name = "Final Energy Commercial"
+            cols = ["sector", "scen", "region", "year", "enduse", "source", "buildingtype", "fuel_switched", "fuel"] 
         else:
             emissions_csv_name = "CO2 emissions Industry"
             fin_energy_csv_name = "Final Energy Industry"
+            cols = ["sector", "scen", "region", "year", "source", "hydrogen_source", "subsectorgroup_c", "fuel"]
 
         # Create emissions CSV
         logger.info(f"Creating emissions CSV: {emissions_csv_name}")
