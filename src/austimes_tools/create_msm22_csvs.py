@@ -34,7 +34,7 @@ CSV_COLUMN_ORDER_MAPPING = {
     "EnEff Industry": ["model", "study", "region", "isp_subregion", "year", "unit", "varbl", "ee_category", "fuel", "nemreg", "scen", "source", "subsectorgroup_c", "val"],
     "Fin Energy Residential": ["model", "study", "region", "isp_subregion", "year", "unit", "varbl", "enduse", "fuel", "fuel_switched", "scen", "source", "subsector_p", "val"],
     "Fin energy Transport": ["region", "isp_subregion","year", "unit", "varbl", "enduse", "fuel", "scen", "subsector_p", "tech", "val"],
-    "Fuels switched industry": ["sector", "scen", "region", "isp_subregion", "year", "source", "subsectorgroup_c", "fuel_switched_from", "fuel_switched_to", "hydrogen_source", "PJ_switched"],
+    #"Fuels switched industry": ["sector", "scen", "region", "isp_subregion", "year", "source", "subsectorgroup_c", "fuel_switched_from", "fuel_switched_to", "hydrogen_source", "PJ_switched"],
     "Hydrogen capacity and generation": ["model", "study", "region", "year", "unit", "varbl", "process", "scen", "tech", "val"],
     "Hydrogen exports": ["model", "study", "region", "year", "unit", "varbl", "scen", "val"],
     "Hydrogen fuels": ["model", "study", "region", "year", "unit", "varbl", "process", "commodity", "fuel", "scen", "tech", "val"],
@@ -164,7 +164,7 @@ def process_msm22_csvs(input_dir: Path | str) -> None:
                     columns={"source_p": "source", "sector_p": "sector", "GrandTotal": "val"}
                 )
 
-            # Replace NaN with "-"
+            ## Replace NaN with "-"
             df = df.fillna("-")
 
             if df.empty:
@@ -189,7 +189,9 @@ def process_msm22_csvs(input_dir: Path | str) -> None:
                 logger.error(f"Expected columns: {sorted(column_order)}")
                 # list the missing columns
                 missing_cols = [col for col in column_order if col not in df.columns]
+                extra_cols = [col for col in df.columns if col not in column_order]
                 logger.error(f"Missing columns: {sorted(missing_cols)}")
+                logger.error(f"Extra columns: {sorted(extra_cols)}")
                 continue
             # Reorder columns
             df = df[column_order]
@@ -222,6 +224,16 @@ def process_msm22_csvs(input_dir: Path | str) -> None:
                         # log new unique values
                         new_unique_vals = df[col].unique()
                         logger.info(f"New unique values in {col}: {new_unique_vals}")
+
+
+            # Sort the rows by the column order in column_order
+            if csv_name not in ["Commercial FE with EnInt", "Industry FE with EnInt"]:
+                df = df.sort_values(by=column_order[:-1])
+            else:
+                df = df.sort_values(by=column_order[:-2])
+
+            # Replace "-" with None
+            df = df.replace("-", None)
 
             csv_path = output_path / f"{csv_name}.csv"
             df.to_csv(csv_path, index=False)
@@ -357,14 +369,18 @@ def process_energy_intensity(input_dir: Path | str) -> None:
         # Create emissions CSV
         logger.info(f"Creating emissions CSV: {emissions_csv_name}")
         emissions_df = df[cols + ["kt"]]
+        emissions_df = emissions_df.fillna("-")
         emissions_df = emissions_df.groupby(cols, as_index=False).sum()
+        emissions_df = emissions_df.replace("-", None)
         if not emissions_df.empty:
             emissions_df.to_csv(output_path / f"{emissions_csv_name}.csv", index=False)
 
         # Create final energy CSV
         logger.info(f"Creating final energy CSV: {fin_energy_csv_name}")
         fin_energy_df = df[cols + ["PJ"]]
+        fin_energy_df = fin_energy_df.fillna("-")
         fin_energy_df = fin_energy_df.groupby(cols, as_index=False).sum()
+        fin_energy_df = fin_energy_df.replace("-", None)
         if not fin_energy_df.empty:
             fin_energy_df.to_csv(output_path / f"{fin_energy_csv_name}.csv", index=False)
 
@@ -405,7 +421,7 @@ def process_msm22_files(input_path, no_en_int, en_int_only):
         process_energy_intensity(input_path)
 
 if __name__ == "__main__":
-    process_msm22_files()
+    input_path = "D:/gre538/Model_Aus_TIMES-msm24-004a/Exported_files/"
+    #process_msm22_csvs(input_path)
+    process_energy_intensity(input_path)
 
-if __name__ == "__main__":
-    process_msm22_files()  # Changed to use the CLI interface
