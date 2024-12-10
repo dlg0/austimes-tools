@@ -29,6 +29,7 @@ CSV_COLUMN_ORDER_MAPPING = {
     "Elec fuels": ["model", "study", "region", "isp_subregion", "year", "unit", "varbl", "fuel", "scen", "tech", "val"],
     "CO2 emissions - non bldg+ind": ["model", "region", "isp_subregion", "year", "unit", "emission_type", "enduse", "scen", "sector", "state", "subsector_p", "tech", "val"],
     "CO2 emissions - Industry - Process": ["region", "isp_subregion", "year", "unit", "ee_category", "endusegroup_p", "scen", "source", "val"],
+    "CO2 emissions - Residential": ["sector", "scen", "region", "year", "enduse", "source", "val"],
     "Elec capacity and generation": ["model", "study", "region", "isp_subregion", "year", "unit", "varbl", "fuel", "scen", "tech", "val"],
     "EnEff Buildings": ["model", "study", "region", "isp_subregion","year", "unit", "varbl", "buildingtype", "ee_category", "enduse", "fuel", "scen", "source", "val"],
     "EnEff Industry": ["model", "study", "region", "isp_subregion", "year", "unit", "varbl", "ee_category", "fuel", "nemreg", "scen", "source", "subsectorgroup_c", "val"],
@@ -76,6 +77,7 @@ SHEET_NAME_MAPPING = {
     "MSM22-ind2-emissions": "IND2 emissions",
     "MSM22-ind2-fuel-and-feedstock": "IND2 fuel and feedstock",
     "MSM22-h2-prod-by-ts": "Hydrogen generation by timeslice",
+    "MSM22-res-emis": "CO2 emissions - Residential",
 }
 
 # Add this near the top of the file with other imports
@@ -206,6 +208,8 @@ def process_msm22_csvs(input_dir: Path | str) -> None:
             # Group by all columns except val and sum
             if csv_name not in ["Commercial FE with EnInt", "Industry FE with EnInt"]:
                 df = df.groupby(column_order[:-1], as_index=False).sum()
+            else:
+                df = df.groupby(column_order[:-2], as_index=False).sum()
 
             # Check for nans
             if df.isna().any().any():
@@ -230,6 +234,12 @@ def process_msm22_csvs(input_dir: Path | str) -> None:
                     logger.info(f"New unique values in {col}: {new_unique_vals}")
 
 
+            # Group by all columns except val and sum (again after dropping rows in the filter)
+            if csv_name not in ["Commercial FE with EnInt", "Industry FE with EnInt"]:
+                df = df.groupby(column_order[:-1], as_index=False).sum()
+            else:
+                df = df.groupby(column_order[:-2], as_index=False).sum()
+
             # Sort the rows by the column order in column_order
             if csv_name not in ["Commercial FE with EnInt", "Industry FE with EnInt"]:
                 df = df.sort_values(by=column_order[:-1])
@@ -242,9 +252,9 @@ def process_msm22_csvs(input_dir: Path | str) -> None:
                     # drop the isp_subregion column
                     if "isp_subregion" in df.columns:
                         df = df.drop(columns=["isp_subregion"])
-                # run a groupby on the remaining columns and sum the val column
-                column_order_no_isp = [col for col in column_order if col not in ["isp_subregion", "val"]]
-                df = df.groupby(column_order_no_isp, as_index=False).sum()
+                    # run a groupby on the remaining columns and sum the val column
+                    column_order_no_isp = [col for col in column_order if col not in ["isp_subregion", "val"]]
+                    df = df.groupby(column_order_no_isp, as_index=False).sum()
 
             # Replace "-" with None
             df = df.replace("-", None)
