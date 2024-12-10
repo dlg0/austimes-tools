@@ -36,8 +36,9 @@ CSV_COLUMN_ORDER_MAPPING = {
     "Fin energy Transport": ["region", "isp_subregion","year", "unit", "varbl", "enduse", "fuel", "scen", "subsector_p", "tech", "val"],
     #"Fuels switched industry": ["sector", "scen", "region", "isp_subregion", "year", "source", "subsectorgroup_c", "fuel_switched_from", "fuel_switched_to", "hydrogen_source", "PJ_switched"],
     "Hydrogen capacity and generation": ["model", "study", "region", "year", "unit", "varbl", "process", "scen", "tech", "val"],
+    "Hydrogen generation by timeslice": ["model", "study", "region", "year", "unit", "varbl", "process", "scen", "tech", "timeslice", "val"],
     "Hydrogen exports": ["model", "study", "region", "year", "unit", "varbl", "scen", "val"],
-    "Hydrogen fuels": ["model", "study", "region", "year", "unit", "varbl", "process", "commodity", "fuel", "scen", "tech", "val"],
+    "Hydrogen fuels": ["model", "study", "region", "year", "unit", "process", "commodity", "fuel", "scen", "tech", "val"],
     "IND2 fuel and feedstock": ["study","scen","region","isp_subregion","sector","fuel","commodity","unit","year","val"],
     "IND2 emissions": ["study","scen","region","isp_subregion","sector","commodity","unit","year","val"],
     # These two match the columns in the FE_template.xlsx, not the final CSVs
@@ -47,7 +48,9 @@ CSV_COLUMN_ORDER_MAPPING = {
 }
 
 CSV_TO_FILTER_OUT_MAPPING = {
-    "CO2 emissions - Industry - Process": [{"source":["-"]}],
+    "CO2 emissions - Industry - Process": {"source":["-"]},
+    "EnEff Buildings": {"ee_category":["Frontier levers"]},
+    "Hydrogen generation by timeslice": {"process":["H2prd_SMR","H2prd_SMR_ccs"]},
 }
 
 
@@ -72,6 +75,7 @@ SHEET_NAME_MAPPING = {
     "MSM22 Industry FE with EnInt": "Industry FE with EnInt",
     "MSM22-ind2-emissions": "IND2 emissions",
     "MSM22-ind2-fuel-and-feedstock": "IND2 fuel and feedstock",
+    "MSM22-h2-prod-by-ts": "Hydrogen generation by timeslice",
 }
 
 # Add this near the top of the file with other imports
@@ -210,20 +214,20 @@ def process_msm22_csvs(input_dir: Path | str) -> None:
 
             # Filter out rows
             if csv_name in CSV_TO_FILTER_OUT_MAPPING:
-                for filter_dict in CSV_TO_FILTER_OUT_MAPPING[csv_name]:
-                    logger.info(f"Filtering out rows with {filter_dict}")
-                    # Log unique values in each filter column
-                    for col, values in filter_dict.items():
-                        unique_vals = df[col].unique()
-                        logger.info(f"Unique values in {col}: {unique_vals}")
-                        # Remove entire rows where this column matches any of the filtered values
-                        rows_before = len(df)
-                        df = df[~df[col].isin(values)]
-                        rows_removed = rows_before - len(df)
-                        logger.info(f"Filtered out {rows_removed} rows where {col} matched {values}")
-                        # log new unique values
-                        new_unique_vals = df[col].unique()
-                        logger.info(f"New unique values in {col}: {new_unique_vals}")
+                filter_dict = CSV_TO_FILTER_OUT_MAPPING[csv_name]
+                logger.info(f"Filtering out rows with {filter_dict}")
+                # Log unique values in each filter column
+                for col, values in filter_dict.items():
+                    unique_vals = df[col].unique()
+                    logger.info(f"Unique values in {col}: {unique_vals}")
+                    # Remove entire rows where this column matches any of the filtered values
+                    rows_before = len(df)
+                    df = df[~df[col].isin(values)]
+                    rows_removed = rows_before - len(df)
+                    logger.info(f"Filtered out {rows_removed} rows where {col} matched {values}")
+                    # log new unique values
+                    new_unique_vals = df[col].unique()
+                    logger.info(f"New unique values in {col}: {new_unique_vals}")
 
 
             # Sort the rows by the column order in column_order
@@ -231,6 +235,16 @@ def process_msm22_csvs(input_dir: Path | str) -> None:
                 df = df.sort_values(by=column_order[:-1])
             else:
                 df = df.sort_values(by=column_order[:-2])
+
+            drop_isp_subregion = True
+            if drop_isp_subregion:
+                if csv_name not in ["Commercial FE with EnInt", "Industry FE with EnInt"]:
+                    # drop the isp_subregion column
+                    if "isp_subregion" in df.columns:
+                        df = df.drop(columns=["isp_subregion"])
+                # run a groupby on the remaining columns and sum the val column
+                column_order_no_isp = [col for col in column_order if col not in ["isp_subregion", "val"]]
+                df = df.groupby(column_order_no_isp, as_index=False).sum()
 
             # Replace "-" with None
             df = df.replace("-", None)
