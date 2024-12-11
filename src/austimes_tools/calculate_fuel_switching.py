@@ -59,7 +59,7 @@ CS_from_fuel_mapping = {
 # <rs-type> is one of [Appt, SHou, THou], 
 # <end-use> is a single letter [a, h, w, o, v, l, i, c]
 # <fuel> is one of [e=Electricity, g=Natural Gas, l=LPG, w=Wood]
-RS_process_name_col = "process"
+RS_process_name_col = "commodity"
 RS_process_prefix = "RS"
 RS_from_fuel_mapping = {
     "e": "Electricity",
@@ -119,60 +119,109 @@ def get_to_fuel(supply_process: str, from_fuel: str) -> tuple[str, str]:
     #row_variable = row["varbl"]
 
     if supply_process.startswith("EE"):
+        logger.info(f"Supply process: {supply_process} is EE")
         to_fuel_suffix = supply_process.split("-")[-1]
         to_fuel = from_fuel # this is an energy efficiency process
-        entry_type = "energy-efficiency-es"
+        entry_type = "energy-efficiency"
+
     elif supply_process.startswith("ETI_EE"):
+        logger.info(f"Supply process: {supply_process} is ETI_EE")
         to_fuel = from_fuel # this is an energy efficiency process
-        entry_type = "energy-efficiency-eti"
+        entry_type = "energy-efficiency"
+
     elif supply_process.startswith("ETI"):
+        eti_mapping = {
+            "ELE": "electrification",
+            "FS": "fuel-switch",
+        }
+        logger.info(f"Supply process: {supply_process} is ETI")
         supply_process_no_prefix = supply_process.replace("ETI_", "")
         eti_type = supply_process_no_prefix.split("_")[0]
+        eti_type = eti_mapping[eti_type]
         to_fuel_suffix = supply_process_no_prefix.split("_")[1]
         to_fuel = ETI_fuel_mapping[to_fuel_suffix]
-        entry_type = "eti-"+eti_type
-        if eti_type == "ELE":
-            entry_type = "electrification-eti"
+        entry_type = eti_type
+
     elif supply_process.startswith("IFL"):
+        logger.info(f"Supply process: {supply_process} is IFL")
+        ifl_mapping = {
+            "IT": "automation",
+        }
         supply_process_no_prefix = supply_process.replace("IFL_", "")
         ifl_type = supply_process_no_prefix.split("_")[0]
+        ifl_type = ifl_mapping[ifl_type]
         to_fuel = from_fuel # these are all automation, etc type processes which can remove any fuel type
-        entry_type = "ifl-"+ifl_type
+        entry_type = ifl_type
+
     elif supply_process.startswith("IES"):
-        entry_type = "consumption"
+        logger.info(f"Supply process: {supply_process} is IES")
+        entry_type = "no-switch"
         if supply_process.startswith("IES_ele"):
             supply_process = "IES_ele"
-            entry_type = "electrification-ies"
+            entry_type = "electrification"
 
         to_fuel = ENSER_fuel_mapping[supply_process]
 
     elif supply_process.startswith("BFL"):
-        bfl_type = supply_process.split("_")[3]
+        logger.info(f"Supply process: {supply_process} is BFL")
+        bfl_mapping = {
+            "Eni": "energy-efficiency",
+            "Dem": "demand-reduction",
+        }
+        bfl_type = supply_process.split("_")[3].split("-")[0]
+        bfl_type = bfl_mapping[bfl_type]
         to_fuel = from_fuel # these are all energy efficiency processes
-        entry_type = "bfl-"+bfl_type
+        entry_type = bfl_type
+
     elif supply_process.startswith("TCS"):
+        logger.info(f"Supply process: {supply_process} is TCS")
         if "BioG-Gas" in supply_process:
+            logger.info(f"Supply process: {supply_process} is BioG-Gas")
             to_fuel = "Biogas"
             entry_type = "fuel-switch"
-        elif "Gas2Elc":
+        elif "Gas2Elc" in supply_process:
+            logger.info(f"Supply process: {supply_process} is Gas2Elc")
             to_fuel = "Electricity"
-            entry_type = "fuel-switch"
+            entry_type = "electrification"
         elif "H2-Gas" in supply_process:
+            logger.info(f"Supply process: {supply_process} is H2-Gas")
             to_fuel = "Hydrogen"
             entry_type = "fuel-switch"
         elif "Oil" in supply_process:
+            logger.info(f"Supply process: {supply_process} is Oil")
             to_fuel = "Oil"
-            entry_type = "consumption"
+            entry_type = "no-switch"
         elif "Elec" in supply_process:
+            logger.info(f"Supply process: {supply_process} is Elec")
             to_fuel = "Electricity"
-            entry_type = "consumption"
+            entry_type = "no-switch"
         elif "Gas" in supply_process:
+            logger.info(f"Supply process: {supply_process} is Gas")
             to_fuel = "Natural Gas"
-            entry_type = "consumption"
+            entry_type = "no-switch"
         else:
             raise ValueError(f"Unknown process: {supply_process}")
+
     elif supply_process.startswith("CEE"):
-        entry_type = "energy-efficiency-cs"
+        logger.info(f"Supply process: {supply_process} is CEE")
+        entry_type = "energy-efficiency"
+        to_fuel = from_fuel # these are all energy efficiency processes
+
+    elif supply_process.startswith("RTS"):
+        logger.info(f"Supply process: {supply_process} is RTS")
+        to_fuel_suffix = supply_process.split("-")[-1]
+        if to_fuel_suffix in ["g2e", "w2e", "l2e"]:
+            to_fuel = "Electricity"
+            entry_type = "electrification"
+        elif to_fuel_suffix in ["e", "g", "l", "w"]:
+            to_fuel = from_fuel # these are all energy efficiency processes
+            entry_type = "no-switch"
+        else:
+            raise ValueError(f"Unknown process: {supply_process}")
+
+    elif supply_process.startswith("REE"):
+        logger.info(f"Supply process: {supply_process} is REE")
+        entry_type = "energy-efficiency"
         to_fuel = from_fuel # these are all energy efficiency processes
 
     else:
@@ -249,7 +298,7 @@ def calculate_fuel_switching_logic(file_path: Path | str) -> None:
     # Loop through each process and calculate the fuel switching
 
     # sectors to process
-    sectors = ["Commercial"] #["Industry", "Transport", "Commercial", "Residential"]
+    sectors = ["Industry", "Commercial", "Residential"]
     sector_prefix_mapping = {
         "Industry": "ES",
         "Transport": "TR",
@@ -290,6 +339,11 @@ def calculate_fuel_switching_logic(file_path: Path | str) -> None:
                 from_fuel_suffix = process_name_no_prefix.split("-")[-1][0]
                 from_fuel = from_fuel_mapping[from_fuel_suffix]
                 process_name = process_name_no_prefix.replace(f"-{from_fuel_suffix}", "")
+            elif sector == "Residential":
+                process_name_no_prefix = process.replace(process_prefix, "")
+                from_fuel_suffix = process_name_no_prefix.split("-")[-1]
+                from_fuel = from_fuel_mapping[from_fuel_suffix]
+                process_name = process_name_no_prefix.replace(f"-{from_fuel_suffix}", "")
 
             # Log the process name, from_fuel, and from_fuel_suffix
             logger.info(f"Process: {process_name}, From Fuel: {from_fuel}, From Fuel Suffix: {from_fuel_suffix}")
@@ -299,20 +353,30 @@ def calculate_fuel_switching_logic(file_path: Path | str) -> None:
             # Loop through each row of df_process
             for index, row in df_process.iterrows():
 
-                to_fuel, entry_type = get_to_fuel(row["process"], from_fuel)
+                supply_process = row["process"]
+                to_fuel, entry_type = get_to_fuel(supply_process, from_fuel)
 
                 # Get the fuel-to from the process column entry
                 # Log the fuel-from and fuel-to
                 logger.info(f"Fuel-from: {from_fuel}, Fuel-to: {to_fuel}")
+
                 # Create a new row which is row plus the fuel-switched-from and fuel-switched-to
                 new_row = row.copy()
                 new_row["fuel-switched-from"] = from_fuel
                 new_row["fuel-switched-to"] = to_fuel
                 new_row["process_name"] = process_name
                 new_row["sector"] = sector
-                if from_fuel == to_fuel:
-                    entry_type = "no-change"
                 new_row["entry_type"] = entry_type
+
+                # Couple of checks
+                if from_fuel == to_fuel:
+                    if entry_type not in ["no-switch", "energy-efficiency", "automation", "demand-reduction"]:
+                        raise ValueError(f"Entry type is not consumption or energy-efficiency (is {entry_type}) for {supply_process} -> {process} with from_fuel {from_fuel} and to_fuel {to_fuel}")
+                if entry_type in ["fuel-switch", "electrification"]:
+                    if to_fuel in ["Coal", "Natural Gas", "LPG", "Wood", "Oil", "Brown Coal"]:
+                        logger.warning(f"Entry type is {entry_type} for {supply_process} -> {process} with from_fuel {from_fuel} and to_fuel {to_fuel}")
+                        raise ValueError(f"Fuel switch to {to_fuel} is not allowed")
+
                 df_fuel_switch_all = pd.concat([df_fuel_switch_all, pd.DataFrame([new_row])], ignore_index=True)
 
             # Drop everything but years and fuel, then groupby fuel and sum
