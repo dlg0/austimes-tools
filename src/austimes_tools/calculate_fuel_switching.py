@@ -12,6 +12,15 @@ import plotly.express as px
 logger.remove()  # Remove default handler
 logger.add(sys.stderr, level="INFO")  # Add handler with stderr as sink
 
+IND2_process_name_col = "commodity"
+IND2_process_prefix = "IND2"
+IND2_from_fuel_mapping = {
+    "e": "Electricity",
+    "g": "Natural Gas",
+    "l": "LPG",
+    "w": "Wood",
+}
+
 # Map the fuel suffix to the fuel type
 # ES format is ES-<fuel>
 ES_process_name_col = "commodity"
@@ -73,21 +82,31 @@ sector_structure = {
         "process_name_col": ES_process_name_col,
         "process_prefix": ES_process_prefix,
         "from_fuel_mapping": ES_from_fuel_mapping,
+        "varbl_filter": ["FinEn_AEMO_eneff","FinEn_enser"],
     },
     "TR": {
         "process_name_col": TR_process_name_col,
         "process_prefix": TR_process_prefix,
         "from_fuel_mapping": TR_from_fuel_mapping,
+        "varbl_filter": ["FinEn_AEMO_eneff","FinEn_enser"],
     },
     "CS": {
         "process_name_col": CS_process_name_col,
         "process_prefix": CS_process_prefix,
         "from_fuel_mapping": CS_from_fuel_mapping,
+        "varbl_filter": ["FinEn_AEMO_eneff","FinEn_enser"],
     },
     "RS": {
         "process_name_col": RS_process_name_col,
         "process_prefix": RS_process_prefix,
         "from_fuel_mapping": RS_from_fuel_mapping,
+        "varbl_filter": ["FinEn_AEMO_eneff","FinEn_enser"],
+    },
+    "IND2": {
+        "process_name_col": IND2_process_name_col,
+        "process_prefix": IND2_process_prefix,
+        "from_fuel_mapping": IND2_from_fuel_mapping,
+        "varbl_filter": ["FinEn_consumed"],
     },
 }
 
@@ -256,7 +275,7 @@ def calculate_fuel_switching_logic(file_path: Path | str) -> None:
             raise ValueError("File must be CSV or Excel (.csv, .xlsx, .xls)")
 
         # filter out varbl = ["FinEn_AEMO", "FinEn_AEMO_eneff", "FinEn_enser", "FinEn_consumed"]
-        df = df[df["varbl"].isin(["FinEn_AEMO", "FinEn_AEMO_eneff", "FinEn_enser", "FinEn_consumed"])]
+        df = df[df["varbl"].isin(["FinEn_AEMO", "FinEn_AEMO_eneff", "FinEn_enser", "FinEn_consumed","feedstock_consumption"])]
 
         # Cache the dataframe
         logger.info(f"Caching data to: {cache_path}")
@@ -269,6 +288,60 @@ def calculate_fuel_switching_logic(file_path: Path | str) -> None:
     # FinEn_consumed (p,c): Complete final energy - consumption of sector fuels. Hence, not very disaggregated for Industry and Buildings
 
     years = ["2025", "2030", "2035", "2040", "2045", "2050"]
+
+    # Create the growth for the industry2 sector
+    growth = df[df["is_ind2_p"] == "yes"]
+    growth = growth[growth["varbl"].isin(["feedstock_consumption"])]
+    _cols = ["scen", "region", "subsector_p"]
+    growth = growth[_cols+years]
+    # melt the dataframe
+    growth = growth.melt(id_vars=_cols, value_vars=years, var_name="year")
+    # group by the scenario, region, subsector_p and year and sum the value
+    growth = growth.groupby(_cols + ["year"]).sum().reset_index()
+    # pivot back to wide format
+    growth = growth.pivot(index=_cols, columns="year", values="value").reset_index()
+    # for each row, divide all year columns by the 2025 column
+    for index, row in growth.iterrows():
+        baseline_value = row[years[0]]
+        for year in years:
+            row[year] = row[year] / baseline_value
+        growth.loc[index] = row
+
+    # Create the baseline fuel consumption of the industry2 sector
+    actual = df[df["is_ind2_p"] == "yes"]
+    actual = actual[actual["varbl"].isin(["FinEn_consumed"]) & ~actual["subsector_p"].isin(["Feed Stock"])]
+    _cols = ["scen", "region", "subsector_p"]
+    actual = actual[_cols+["fuel"]+years]
+    actual = actual.groupby(_cols+["fuel"], as_index=False).sum()
+    # set all year columns equal to the first year
+    baseline = actual.copy()
+    for year in years:
+        baseline[year] = baseline[years[0]]
+    # group by the scenario, region, subsector_p and transform by dividing by the sum of the groupby
+    grouped = baseline.groupby(_cols)
+    for index, group in grouped:
+        print(index)
+        this_growth = growth.set_index(_cols).loc[index]
+        mask = (baseline[_cols] == index).all(axis=1)
+        for year in years:
+            group[year] = group[year] * this_growth[year] 
+        baseline.loc[mask] = group
+        print(group.to_string())
+        print(baseline.loc[mask].to_string())
+        print("---")
+
+    # create a change dataframe, where the year columns are the difference between the actual and baseline
+    change = actual.copy()
+    for year in years:
+        change[year] = actual[year] - baseline[year]
+
+
+    # write the change, actual, and baseline to csv
+    change.melt(id_vars=_cols+["fuel"], value_vars=years, var_name="year").to_csv("change.csv", index=False)
+    actual.melt(id_vars=_cols+["fuel"], value_vars=years, var_name="year").to_csv("actual.csv", index=False)
+    baseline.melt(id_vars=_cols+["fuel"], value_vars=years, var_name="year").to_csv("baseline.csv", index=False)
+
+    # Back to the non-industry2 sectors
 
     cols_to_keep = ["scen", "region", "source_p", "subsectorgroup_c", "hydrogen_source", "unit"]
     cols_we_use = ["process", "commodity", "varbl", "fuel"]
@@ -304,6 +377,7 @@ def calculate_fuel_switching_logic(file_path: Path | str) -> None:
         "Transport": "TR",
         "Commercial": "CS",
         "Residential": "RS",
+        "Industry2": "IND2",
     }
 
     # Create empty df for fuel switching results with the following columns:
@@ -326,7 +400,12 @@ def calculate_fuel_switching_logic(file_path: Path | str) -> None:
             # Get the relevant rows for all processes which start with the process name
             df_process = df_sector[df_sector[process_name_col].str.startswith(process)]
             # Filter for varbl = ["FinEn_AEMO_eneff"]
-            df_process = df_process[df_process["varbl"].isin(["FinEn_AEMO_eneff","FinEn_enser"])]
+            df_process = df_process[df_process["varbl"].isin(this_sector_structure["varbl_filter"])]
+            if sector == "Industry2":
+                # Filter for column "is_ind2" = "yes"
+                df_process = df_process[df_process["is_ind2"] == "yes"]
+
+
 
             # Extract the process name and fuel suffix
             if sector == "Industry":
