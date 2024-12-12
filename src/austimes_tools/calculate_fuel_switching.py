@@ -12,6 +12,15 @@ import plotly.express as px
 logger.remove()  # Remove default handler
 logger.add(sys.stderr, level="INFO")  # Add handler with stderr as sink
 
+ind2_varbl_process_mapping = {
+    "ucrepi_activity-al": "Alumina",
+    "ucrepi_activity-alum": "Aluminum",
+    "ucrepi_activity-cem": "Cement+",
+    "ucrepi_activity-che": "PetChem",
+    "ucrepi_activity-ironsteel": "Iron and Steel",
+}
+ind2_output_varbls = ind2_varbl_process_mapping.keys()
+ 
 IND2_process_name_col = "commodity"
 IND2_process_prefix = "IND2"
 IND2_from_fuel_mapping = {
@@ -174,7 +183,7 @@ def get_to_fuel(supply_process: str, from_fuel: str) -> tuple[str, str]:
 
     elif supply_process.startswith("IES"):
         logger.info(f"Supply process: {supply_process} is IES")
-        entry_type = "no-switch"
+        entry_type = "remaining-consumption"
         if supply_process.startswith("IES_ele"):
             supply_process = "IES_ele"
             entry_type = "electrification"
@@ -209,15 +218,15 @@ def get_to_fuel(supply_process: str, from_fuel: str) -> tuple[str, str]:
         elif "Oil" in supply_process:
             logger.info(f"Supply process: {supply_process} is Oil")
             to_fuel = "Oil"
-            entry_type = "no-switch"
+            entry_type = "remaining-consumption"
         elif "Elec" in supply_process:
             logger.info(f"Supply process: {supply_process} is Elec")
             to_fuel = "Electricity"
-            entry_type = "no-switch"
+            entry_type = "remaining-consumption"
         elif "Gas" in supply_process:
             logger.info(f"Supply process: {supply_process} is Gas")
             to_fuel = "Natural Gas"
-            entry_type = "no-switch"
+            entry_type = "remaining-consumption"
         else:
             raise ValueError(f"Unknown process: {supply_process}")
 
@@ -234,7 +243,7 @@ def get_to_fuel(supply_process: str, from_fuel: str) -> tuple[str, str]:
             entry_type = "electrification"
         elif to_fuel_suffix in ["e", "g", "l", "w"]:
             to_fuel = from_fuel # these are all energy efficiency processes
-            entry_type = "no-switch"
+            entry_type = "remaining-consumption"
         else:
             raise ValueError(f"Unknown process: {supply_process}")
 
@@ -249,6 +258,162 @@ def get_to_fuel(supply_process: str, from_fuel: str) -> tuple[str, str]:
     return to_fuel, entry_type
 
 
+def create_industry2_df(df: pd.DataFrame, years: list[str], csv_cols: list[str]) -> pd.DataFrame:
+
+    _cols = ["scen", "region", "subsector_p"]
+
+    # find all entries of df["fuel] == "Natural gas" and set them to "Natural Gas"
+    df.loc[df["fuel"] == "Natural gas", "fuel"] = "Natural Gas"
+
+    # Create the growth for the industry2 sector
+    growth = df[df["is_ind2_p"] == "yes"]
+    growth = growth[growth["varbl"].isin(["feedstock_consumption"])]
+    growth = growth[_cols+years]
+    # melt the dataframe
+    growth = growth.melt(id_vars=_cols, value_vars=years, var_name="year")
+    # group by the scenario, region, subsector_p and year and sum the value
+    growth = growth.groupby(_cols + ["year"]).sum().reset_index()
+    # pivot back to wide format
+    growth = growth.pivot(index=_cols, columns="year", values="value").reset_index()
+    # for each row, divide all year columns by the 2025 column
+    for index, row in growth.iterrows():
+        baseline_value = row[years[0]]
+        for year in years:
+            row[year] = row[year] / baseline_value
+        growth.loc[index] = row
+
+    # Create the growth for the industry2 sector based on only the specific commodity production
+    growth2 = df[df["is_ind2_p"] == "yes"]
+    growth2 = growth2[growth2["varbl"].isin(ind2_varbl_process_mapping.keys())]
+    growth2 = growth2[_cols+years]
+    # melt the dataframe
+    growth2 = growth2.melt(id_vars=_cols, value_vars=years, var_name="year")
+    # group by the scenario, region, subsector_p and year and sum the value
+    growth2 = growth2.groupby(_cols + ["year"]).sum().reset_index()
+    # pivot back to wide format
+    growth2 = growth2.pivot(index=_cols, columns="year", values="value").reset_index()
+    # for each row, divide all year columns by the 2025 column
+    for index, row in growth2.iterrows():
+        baseline_value = row[years[0]]
+        for year in years:
+            # log the row
+            logger.info(f"Row: {row}")
+            logger.info(f"Year: {year}, Value: {row[year]}, Baseline Value: {baseline_value}")
+            row[year] = row[year] / baseline_value
+        growth2.loc[index] = row
+
+
+    # Create the baseline fuel consumption of the industry2 sector
+    actual = df[df["is_ind2_p"] == "yes"]
+    actual = actual[actual["varbl"].isin(["FinEn_consumed"]) & ~actual["subsector_p"].isin(["Feed Stock"])]
+    actual = actual[_cols+["fuel"]+years]
+    actual = actual.groupby(_cols+["fuel"], as_index=False).sum()
+    # set all year columns equal to the first year
+    baseline = actual.copy()
+    for year in years:
+        baseline[year] = baseline[years[0]]
+    # group by the scenario, region, subsector_p and transform by dividing by the sum of the groupby
+    grouped = baseline.groupby(_cols)
+    for index, group in grouped:
+        print(index)
+        this_growth = growth.set_index(_cols).loc[index]
+        mask = (baseline[_cols] == index).all(axis=1)
+        for year in years:
+            group[year] = group[year] * this_growth[year] 
+        baseline.loc[mask] = group
+        print(group.to_string())
+        print(baseline.loc[mask].to_string())
+        print("---")
+
+    # create a change dataframe, where the year columns are the difference between the actual and baseline
+    change = actual.copy()
+    for year in years:
+        change[year] = actual[year] - baseline[year]
+
+    change_long = change.melt(id_vars=_cols+["fuel"], value_vars=years, var_name="year")
+    actual_long = actual.melt(id_vars=_cols+["fuel"], value_vars=years, var_name="year")
+    baseline_long = baseline.melt(id_vars=_cols+["fuel"], value_vars=years, var_name="year")
+
+    # write the change, actual, and baseline to csv
+    change_long.to_csv("change.csv", index=False)
+    actual_long.to_csv("actual.csv", index=False)
+    baseline_long.to_csv("baseline.csv", index=False)
+
+    # create empty df for fuel switching results with the following columns:
+    df_fuel_switch_all = pd.DataFrame(columns=csv_cols+["value"])
+    # for each row in change_long, create a new row in df_fuel_switch_all
+    grouped = change_long.groupby(_cols)
+    for index, group in grouped:
+        print(index)
+        print(group)
+        print("---")
+
+
+    for index, row in change_long.iterrows():
+ 
+        change_row = row.copy()
+        actual_row = actual_long.iloc[index]
+        baseline_row = baseline_long.iloc[index]
+
+        # assert that all columns are the same except for value
+        assert all(change_row.iloc[:-1] == actual_row.iloc[:-1])
+
+        new_row = row.copy()
+
+        new_row["hydrogen_source"] = None
+        new_row["source_p"] = None
+        new_row["sector"] = "Industry"
+        new_row["process_name"] = row["subsector_p"]
+        new_row["subsectorgroup_c"] = row["subsector_p"]
+        new_row["fuel-switched-to"] = row["fuel"]
+        new_row["fuel-switched-from"] = None 
+        new_row["unit"] = "PJ"
+        if new_row["fuel-switched-to"] == "Hydrogen":
+            new_row["hydrogen_source"] = "Direct supply"
+ 
+        baseline_value = baseline_row["value"]
+        change_value = change_row["value"]
+
+        remaining_row = new_row.copy()
+        switch_row = new_row.copy()
+
+        if change_value > 0:
+            remaining_row["value"] = baseline_value
+            switch_row["value"] = change_value
+        else:
+            remaining_row["value"] = baseline_value + change_value
+            switch_row["value"] = 0
+
+        remaining_row["entry_type"] = "remaining-consumption"
+        switch_row["entry_type"] = "fuel-switch"
+
+        if switch_row["fuel-switched-to"] == "Electricity":
+            switch_row["entry_type"] = "electrification"
+
+        # drop columns that are not in the csv_cols
+        remaining_row = remaining_row[csv_cols+["value"]]
+        switch_row = switch_row[csv_cols+["value"]]
+
+        df_fuel_switch_all = pd.concat([df_fuel_switch_all, pd.DataFrame([remaining_row])], ignore_index=True)
+        df_fuel_switch_all = pd.concat([df_fuel_switch_all, pd.DataFrame([switch_row])], ignore_index=True)
+
+    # check for duplicates (ignoring the value column)
+    if df_fuel_switch_all[csv_cols].duplicated().any():
+        logger.warning("Duplicate rows found in the dataframe")
+        # print the duplicate rows
+        print(df_fuel_switch_all[df_fuel_switch_all[csv_cols].duplicated()])
+        raise ValueError("Duplicate rows found in the dataframe")
+
+    # switch back to wide format
+    df_fuel_switch_all = df_fuel_switch_all.pivot(index=[col for col in csv_cols if col != "year"], columns="year", values="value").reset_index()
+
+    # add empty columns for "commodity", "process", "varbl", and "fuel"
+    df_fuel_switch_all["commodity"] = None
+    df_fuel_switch_all["process"] = None
+    df_fuel_switch_all["varbl"] = None
+    df_fuel_switch_all["fuel"] = None
+
+    return df_fuel_switch_all
 
 def calculate_fuel_switching_logic(file_path: Path | str) -> None:
     """Calculate fuel switching metrics from a CSV or Excel file.
@@ -274,8 +439,8 @@ def calculate_fuel_switching_logic(file_path: Path | str) -> None:
         else:
             raise ValueError("File must be CSV or Excel (.csv, .xlsx, .xls)")
 
-        # filter out varbl = ["FinEn_AEMO", "FinEn_AEMO_eneff", "FinEn_enser", "FinEn_consumed"]
-        df = df[df["varbl"].isin(["FinEn_AEMO", "FinEn_AEMO_eneff", "FinEn_enser", "FinEn_consumed","feedstock_consumption"])]
+        # filter out varbl = ["FinEn_AEMO", "FinEn_AEMO_eneff", "FinEn_enser", "FinEn_consumed","feedstock_consumption"]+ind2_varbl_process_mapping.keys()
+        df = df[df["varbl"].isin(["FinEn_AEMO", "FinEn_AEMO_eneff", "FinEn_enser", "FinEn_consumed","feedstock_consumption"]+list(ind2_varbl_process_mapping.keys()))]
 
         # Cache the dataframe
         logger.info(f"Caching data to: {cache_path}")
@@ -287,61 +452,7 @@ def calculate_fuel_switching_logic(file_path: Path | str) -> None:
     # FinEn_enser (p,c): Production of energy services for Buildings and Industry - EXCEPT from EE, BFL, IFL, and ETI sources.
     # FinEn_consumed (p,c): Complete final energy - consumption of sector fuels. Hence, not very disaggregated for Industry and Buildings
 
-    years = ["2025", "2030", "2035", "2040", "2045", "2050"]
-
-    # Create the growth for the industry2 sector
-    growth = df[df["is_ind2_p"] == "yes"]
-    growth = growth[growth["varbl"].isin(["feedstock_consumption"])]
-    _cols = ["scen", "region", "subsector_p"]
-    growth = growth[_cols+years]
-    # melt the dataframe
-    growth = growth.melt(id_vars=_cols, value_vars=years, var_name="year")
-    # group by the scenario, region, subsector_p and year and sum the value
-    growth = growth.groupby(_cols + ["year"]).sum().reset_index()
-    # pivot back to wide format
-    growth = growth.pivot(index=_cols, columns="year", values="value").reset_index()
-    # for each row, divide all year columns by the 2025 column
-    for index, row in growth.iterrows():
-        baseline_value = row[years[0]]
-        for year in years:
-            row[year] = row[year] / baseline_value
-        growth.loc[index] = row
-
-    # Create the baseline fuel consumption of the industry2 sector
-    actual = df[df["is_ind2_p"] == "yes"]
-    actual = actual[actual["varbl"].isin(["FinEn_consumed"]) & ~actual["subsector_p"].isin(["Feed Stock"])]
-    _cols = ["scen", "region", "subsector_p"]
-    actual = actual[_cols+["fuel"]+years]
-    actual = actual.groupby(_cols+["fuel"], as_index=False).sum()
-    # set all year columns equal to the first year
-    baseline = actual.copy()
-    for year in years:
-        baseline[year] = baseline[years[0]]
-    # group by the scenario, region, subsector_p and transform by dividing by the sum of the groupby
-    grouped = baseline.groupby(_cols)
-    for index, group in grouped:
-        print(index)
-        this_growth = growth.set_index(_cols).loc[index]
-        mask = (baseline[_cols] == index).all(axis=1)
-        for year in years:
-            group[year] = group[year] * this_growth[year] 
-        baseline.loc[mask] = group
-        print(group.to_string())
-        print(baseline.loc[mask].to_string())
-        print("---")
-
-    # create a change dataframe, where the year columns are the difference between the actual and baseline
-    change = actual.copy()
-    for year in years:
-        change[year] = actual[year] - baseline[year]
-
-
-    # write the change, actual, and baseline to csv
-    change.melt(id_vars=_cols+["fuel"], value_vars=years, var_name="year").to_csv("change.csv", index=False)
-    actual.melt(id_vars=_cols+["fuel"], value_vars=years, var_name="year").to_csv("actual.csv", index=False)
-    baseline.melt(id_vars=_cols+["fuel"], value_vars=years, var_name="year").to_csv("baseline.csv", index=False)
-
-    # Back to the non-industry2 sectors
+    years = ["2025", "2030", "2035", "2040", "2045", "2050", "2055", "2060"]
 
     cols_to_keep = ["scen", "region", "source_p", "subsectorgroup_c", "hydrogen_source", "unit"]
     cols_we_use = ["process", "commodity", "varbl", "fuel"]
@@ -353,6 +464,8 @@ def calculate_fuel_switching_logic(file_path: Path | str) -> None:
 
     new_cols = ["fuel-switched-from", "fuel-switched-to", "sector", "process_name", "entry_type"]
 
+    df_original = df.copy()
+
     # Retain only the relevant columns
     cols = cols_to_keep + cols_we_use 
     df = df[cols + years]
@@ -363,6 +476,8 @@ def calculate_fuel_switching_logic(file_path: Path | str) -> None:
     final_cols = cols_to_keep + cols_we_use + new_cols + years
     csv_cols = cols_to_keep + new_cols + ["year"] 
     df_fuel_switch_all = pd.DataFrame(columns=final_cols)
+
+    df_ind2 = create_industry2_df(df_original, years, csv_cols)
 
     # Get a list of all the processes
    # Strip the `-?` or `-??` suffix and remove duplicates
@@ -415,9 +530,10 @@ def calculate_fuel_switching_logic(file_path: Path | str) -> None:
                 process_name = process_name_no_prefix.replace(f"-{from_fuel_suffix}", "")
             elif sector == "Commercial":
                 process_name_no_prefix = process.replace(process_prefix+"_", "")
-                from_fuel_suffix = process_name_no_prefix.split("-")[-1][0]
+                complete_suffix = process_name_no_prefix.split("-")[-1]
+                from_fuel_suffix = complete_suffix[0]
                 from_fuel = from_fuel_mapping[from_fuel_suffix]
-                process_name = process_name_no_prefix.replace(f"-{from_fuel_suffix}", "")
+                process_name = process_name_no_prefix.replace(f"-{complete_suffix}", "")
             elif sector == "Residential":
                 process_name_no_prefix = process.replace(process_prefix, "")
                 from_fuel_suffix = process_name_no_prefix.split("-")[-1]
@@ -449,7 +565,7 @@ def calculate_fuel_switching_logic(file_path: Path | str) -> None:
 
                 # Couple of checks
                 if from_fuel == to_fuel:
-                    if entry_type not in ["no-switch", "energy-efficiency", "automation", "demand-reduction"]:
+                    if entry_type not in ["remaining-consumption", "energy-efficiency", "automation", "demand-reduction"]:
                         raise ValueError(f"Entry type is not consumption or energy-efficiency (is {entry_type}) for {supply_process} -> {process} with from_fuel {from_fuel} and to_fuel {to_fuel}")
                 if entry_type in ["fuel-switch", "electrification"]:
                     if to_fuel in ["Coal", "Natural Gas", "LPG", "Wood", "Oil", "Brown Coal"]:
@@ -458,196 +574,13 @@ def calculate_fuel_switching_logic(file_path: Path | str) -> None:
 
                 df_fuel_switch_all = pd.concat([df_fuel_switch_all, pd.DataFrame([new_row])], ignore_index=True)
 
-            # Drop everything but years and fuel, then groupby fuel and sum
-            df_process_fuel = (
-                df_process[df_process["varbl"] == "FinEn_enser"]
-                .loc[:, years + ["fuel"]]
-                .groupby("fuel")
-                .sum()
-                .reset_index()
-            )
-
-            # Extract the first year of df_process_fuel
-            first_year_fuel_breakdown = df_process_fuel.set_index("fuel").loc[:, years[0]]
-
-            # Do a scaling such that the first year sums to the total baseline energy demand
-            scaling_factor = df_process_baseline.values[0] / first_year_fuel_breakdown.sum()
-            df_process_fuel[years] = df_process_fuel[years].multiply(scaling_factor)
-
-            # Normalise the first year of df_process_fuel to sum to 1
-            first_year_fraction = first_year_fuel_breakdown / first_year_fuel_breakdown.sum()
-
-            # Use an outer product to multiply the first year of df_process_fuel by the total baseline energy demand
-            # to give a table, not a series
-            df_process_fuel_baseline = pd.DataFrame(
-                first_year_fraction.values[:, None] * df_process_baseline.values[None, :],
-                columns=df_process_baseline.index,
-                index=first_year_fuel_breakdown.index,
-            ).reset_index()
-
-            # Ensure all columns are of the same type (including the melted result)
-            df_process_fuel[years] = df_process_fuel[years].astype(float)
-            melted_df = df_process_fuel.melt(id_vars=["fuel"], value_vars=years)
-            melted_df["value"] = melted_df["value"].astype(float)
-            melted_df["variable"] = melted_df["variable"].astype(str)
-
-            df_process_fuel_baseline[years] = df_process_fuel_baseline[years].astype(float)
-            melted_df_baseline = df_process_fuel_baseline.melt(
-                id_vars=["fuel"], value_vars=years
-            )
-            melted_df_baseline["value"] = melted_df_baseline["value"].astype(float)
-            melted_df_baseline["variable"] = melted_df_baseline["variable"].astype(str)
-
-            # Instead of subtracting entire DataFrames, create a new one with just the value difference
-            df_fuel_switch = melted_df.copy()
-            df_fuel_switch["value"] = melted_df["value"] - melted_df_baseline["value"]
-
-            # TODO: It's the fuel override that indicates the fuel switching per fuel type process. 
-
-            # NOTES:
-            # - There is an increase or decrease in mt demand which changes energy demand
-            # - There is an increase or decrease in efficiency which changes energy demand
-            # - There are EE which further increase efficiency (fuel switch or not?)
-            # - There are ETI/IFL/BFL which reduce demand that would otherwise have to be met by something else
-            # - There are ETI/IFL/BFL which explicitly switches fuel (the "FS" type). 
-            #       "ETI_FS_<fuel-to>_*" (ind only though)
-            #       "ETI_ELE_<fuel-to>_*" (ind only though - electrification)
-            # - Why can't we just rely on the explict fuel switch? (apart from multiple techs)
-            # - What about hydrogen? Is that captured in the fuel switch?
-            # - Look at one fuel suffix at a time. 
-
-            # Create a 2x1 subplot with the first plot showing fuel consumption and the second plot showing baseline energy demand
-            fig = make_subplots(
-                rows=2,
-                cols=2,
-                subplot_titles=[
-                    f"{process} Fuel Consumption",
-                    f"{process} Baseline Energy Demand",
-                    f"{process} Fuel Switching",
-                    "",  # Empty title for unused subplot
-                ],
-            )
-
-            # Create a consistent color map for all fuels
-            unique_fuels = melted_df["fuel"].unique()
-            colors = px.colors.qualitative.Set3[:len(unique_fuels)]  # You can change Set3 to another colorset if desired
-            fuel_colors = dict(zip(unique_fuels, colors))
-
-            # Create baseline energy demand trace once and reuse it
-            baseline_trace = go.Scatter(
-                x=years,
-                y=df_process_baseline.values,
-                mode="lines",
-                name="Baseline Energy Demand",
-                line=dict(color="black", width=2, dash="dash"),
-                showlegend=True,
-            )
-
-            # Plot for fuel consumption (top left)
-            for fuel in unique_fuels:
-                mask = melted_df["fuel"] == fuel
-                fig.add_trace(
-                    go.Scatter(
-                        x=melted_df[mask]["variable"],
-                        y=melted_df[mask]["value"],
-                        name=fuel,
-                        fill="tonexty",
-                        stackgroup="one",
-                        line=dict(color=fuel_colors[fuel]),
-                        showlegend=True,
-                    ),
-                    row=1,
-                    col=1,
-                )
-            # Add baseline to first plot
-            fig.add_trace(baseline_trace, row=1, col=1)
-
-            # Plot for baseline energy demand (top right)
-            for fuel in unique_fuels:
-                mask = melted_df_baseline["fuel"] == fuel
-                fig.add_trace(
-                    go.Scatter(
-                        x=melted_df_baseline[mask]["variable"],
-                        y=melted_df_baseline[mask]["value"],
-                        name=fuel,
-                        fill="tonexty",
-                        stackgroup="two",
-                        line=dict(color=fuel_colors[fuel]),
-                        showlegend=False,
-                    ),
-                    row=1,
-                    col=2,
-                )
-            # Add baseline to second plot
-            fig.add_trace(
-                go.Scatter(
-                    x=years,
-                    y=df_process_baseline.values,
-                    mode="lines",
-                    name="Baseline Energy Demand",
-                    line=dict(color="black", width=2, dash="dash"),
-                    showlegend=False,
-                ),
-                row=1,
-                col=2,
-            )
-
-            # Plot for fuel switching (bottom left)
-            for fuel in unique_fuels:
-                mask = df_fuel_switch["fuel"] == fuel
-                fig.add_trace(
-                    go.Scatter(
-                        x=df_fuel_switch[mask]["variable"],
-                        y=df_fuel_switch[mask]["value"],
-                        name=fuel,
-                        line=dict(color=fuel_colors[fuel]),
-                        showlegend=False,
-                    ),
-                    row=2,
-                    col=1,
-                )
-            # Add baseline to third plot
-            fig.add_trace(
-                go.Scatter(
-                    x=years,
-                    y=df_process_baseline.values,
-                    mode="lines",
-                    name="Baseline Energy Demand",
-                    line=dict(color="black", width=2, dash="dash"),
-                    showlegend=False,
-                ),
-                row=2,
-                col=1,
-            )
-
-            # Update layout
-            fig.update_layout(
-                height=800,
-                showlegend=True,
-                legend=dict(
-                    yanchor="top",
-                    y=0.99,
-                    xanchor="left",
-                    x=1.05,
-                ),
-            )
-
-            #fig.show()
-
-            logger.info(f"df_process_fuel: {df_process_fuel}")
 
             cnt += 1
-            #if cnt > 4:
-            #    exit()
+
+    # concat df_fuel_switch_all and df_ind2
+    df_fuel_switch_all = pd.concat([df_fuel_switch_all, df_ind2], ignore_index=True)
 
     # For ES, CS, RS we use FinEn_AEMO_eneff + FinEn_enser to get the baseline energy demand
-
-    # Save output to same directory as input
-    output_path = (
-        input_path.parent / f"{input_path.stem}_fuel_switching{input_path.suffix}"
-    )
-    df.to_excel(output_path, index=False)
-    logger.info(f"Saved fuel switching calculations to: {output_path}")
 
     # Save output to same directory as input
     output_path = (
@@ -655,10 +588,23 @@ def calculate_fuel_switching_logic(file_path: Path | str) -> None:
     )
     # melt to long format
     df_fuel_switch_all = df_fuel_switch_all.melt(id_vars=cols_to_keep+cols_we_use+new_cols, value_vars=years, var_name="year", value_name="value")
+    # fill mising indice with "-"
+    df_fuel_switch_all = df_fuel_switch_all.fillna("-")
+    # find rows with sector = "Commercial" and "fuel-switched-to" = "Hydrogen" and set "hydrogen_source" = "Blended"
+    df_fuel_switch_all.loc[(df_fuel_switch_all["sector"] == "Commercial") & (df_fuel_switch_all["fuel-switched-to"] == "Hydrogen"), "hydrogen_source"] = "Blending"
+    # remove rows where value is 0
+    df_fuel_switch_all = df_fuel_switch_all[df_fuel_switch_all["value"] != 0]
+    # remove rows where entry_type is not in ["remaining-consumption", "fuel-switch", "electrification"]
+    df_fuel_switch_all = df_fuel_switch_all[df_fuel_switch_all["entry_type"].isin(["remaining-consumption", "fuel-switch", "electrification"])]
+    # drop the "source_p" column
+    df_fuel_switch_all = df_fuel_switch_all.drop(columns=["source_p","process","commodity","varbl","fuel"])
+    # rename the subsectorgroup_c column to subsector
+    df_fuel_switch_all = df_fuel_switch_all.rename(columns={"subsectorgroup_c": "subsector"})
     # groupby csv_cols and sum the value
-    df_fuel_switch_all = df_fuel_switch_all.groupby(csv_cols).sum().reset_index()
+    _final_cols = [col for col in df_fuel_switch_all.columns if col != "value"]
+    df_fuel_switch_all = df_fuel_switch_all.groupby(_final_cols).sum().reset_index()
     # drop the cols not grouped by
-    df_fuel_switch_all = df_fuel_switch_all.drop(columns = [col for col in df_fuel_switch_all.columns if col not in csv_cols+["value"]])
+    df_fuel_switch_all = df_fuel_switch_all.drop(columns = [col for col in df_fuel_switch_all.columns if col not in _final_cols+["value"]])
     df_fuel_switch_all.to_csv(output_path, index=False)
     logger.info(f"Saved fuel switching calculations to: {output_path}")
 
