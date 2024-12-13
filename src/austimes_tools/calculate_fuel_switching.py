@@ -282,91 +282,163 @@ def create_industry2_df(
         consumption_pj.groupby(all_cols_not_years + ["year"]).sum().reset_index()
     )
 
-    production_mt = df[
-        (df["varbl"].isin(ind2_output_varbls)) & (df["is_ind2_p"].isin(["yes"]))
-    ]
-    production_mt = production_mt.melt(
-        id_vars=all_cols_not_years, value_vars=years, var_name="year"
-    )
-    production_mt = (
-        production_mt.groupby(all_cols_not_years + ["year"]).sum().reset_index()
-    )
+    production_mt = df[df["varbl"].isin(ind2_output_varbls)]
+    production_mt = production_mt.melt(id_vars=all_cols_not_years, value_vars=years, var_name="year")
+    production_mt = (production_mt.groupby(all_cols_not_years + ["year"]).sum().reset_index())
 
     cols_to_keep = _cols + ["year", "fuel", "value", "varbl", "process"]
 
     consumption_pj = consumption_pj[cols_to_keep]
-    production_mt = production_mt[cols_to_keep]
+    production_mt = production_mt[cols_to_keep].copy()
+    # Create reverse mapping once outside the loop
+    rev_mapping = {v: k for k, v in ind2_varbl_process_mapping.items()}
+    # Use vectorized operation to set the subsector_p column
+    production_mt["subsector_p"] = production_mt["varbl"].map(rev_mapping)
+
+
+    production_mt = production_mt.drop(columns=["varbl","process","fuel"])
+    consumption_pj = consumption_pj.drop(columns=["varbl"])
+
     scenarios = consumption_pj["scen"].unique()
     regions = consumption_pj["region"].unique()
 
     # melt the dataframe
     for scen in scenarios:
-        scen_consumption_pj = consumption_pj[consumption_pj["scen"] == scen].drop(columns=["varbl"])
+        scen_consumption_pj = consumption_pj[consumption_pj["scen"] == scen]
         scen_production_mt = production_mt[production_mt["scen"] == scen]
+
         for region in regions:
             region_production_mt = scen_production_mt[scen_production_mt["region"] == region]
             region_consumption_pj = scen_consumption_pj[scen_consumption_pj["region"] == region]
+
             for subsector in subsectors:
-                sector_prod_varbl = ind2_varbl_process_mapping[subsector]
-                sector_production_mt = region_production_mt[
-                    (region_production_mt["subsector_p"] == subsector)
-                    & (region_production_mt["varbl"] == sector_prod_varbl)
-                ].drop(columns=["varbl"])
+                sector_production_mt = region_production_mt[region_production_mt["subsector_p"] == subsector]
                 sector_consumption_pj = region_consumption_pj[region_consumption_pj["subsector_p"] == subsector]
 
-                baseyear_production_mt = sector_production_mt[(sector_production_mt["year"] == years[0])]
-                baseyear_consumption_pj = sector_consumption_pj[(sector_consumption_pj["year"] == years[0])]
+                for year in years:
 
-                # Get baseline fuel mix
-                if subsector == "Alumina":
-                    electrification_strings = ["electric"]
-                    process_groups = ["calcination", "blr", "bayer", "mining"]
-                    for process_group in process_groups:
-                        # get the process group
-                        process_group_consumption_pj = baseyear_consumption_pj[
-                            baseyear_consumption_pj["process"]
-                            .str.lower()
-                            .str.contains(process_group)
-                        ]
-                        # remove rows with 0 value from process group
-                        process_group_consumption_pj = process_group_consumption_pj[ process_group_consumption_pj["value"] != 0 ]
-                        # get the electrification processes
-                        electrification_processes = process_group_consumption_pj[
-                            process_group_consumption_pj["process"]
-                            .str.lower()
-                            .str.contains("|".join(electrification_strings))
-                        ]
-                        if electrification_processes.empty:
-                            logger.info( f"No electrification found in {subsector}:{process_group} group")
-                            logger.info( f"Process group:\n{tabulate(process_group_consumption_pj, headers='keys', tablefmt='pretty', showindex=False)}")
-                        else:
-                            logger.info(f"Electrification found in {subsector}:{process_group} group")
-                            # check if all consumption is in the electric process
-                            if process_group_consumption_pj.equals(electrification_processes):
-                                logger.info( f"All consumption is in the electric process for {scen} {region} {subsector}")
+                    baseyear_production_mt = float(sector_production_mt[(sector_production_mt["year"] == years[0])]["value"].values[0])
+                    thisyear_production_mt = float(sector_production_mt[(sector_production_mt["year"] == year)]["value"].values[0])
+
+                    baseyear_consumption_pj = sector_consumption_pj[(sector_consumption_pj["year"] == years[0])]
+                    thisyear_consumption_pj = sector_consumption_pj[(sector_consumption_pj["year"] == year)]
+
+                    avail_switch_fuels = {"heat":["Coal","Natural Gas","Hydrogen","Oil"],}
+
+                    # Get baseline fuel mix
+                    if subsector == "Alumina":
+                        electrification_strings = ["electric"]
+                        process_groups = [("calcination","heat"), ("mining","heat")] #, ("blr","blr"), ("bayer","heat")]
+                        for process_group, process_group_type in process_groups:
+                            logger.info("==================================================================================================")
+                            logger.info(f"Processing group: {process_group}")
+                            logger.info("==================================================================================================")
+                            # get the process group
+                            baseyear_group_consumption_pj = baseyear_consumption_pj[ baseyear_consumption_pj["process"] .str.lower() .str.contains(process_group) ]
+                            thisyear_group_consumption_pj = thisyear_consumption_pj[ thisyear_consumption_pj["process"] .str.lower() .str.contains(process_group) ]
+
+                            baseyear_by_fuel = baseyear_group_consumption_pj.groupby("fuel", as_index=False).sum().drop(columns=["scen","region","process","subsector_p","year"])
+                            thisyear_by_fuel = thisyear_group_consumption_pj.groupby("fuel", as_index=False).sum().drop(columns=["scen","region","process","subsector_p","year"])
+
+                            baseline_fuel_mix = baseyear_by_fuel.copy()
+                            baseline_fuel_mix["value"] = baseline_fuel_mix["value"] * thisyear_production_mt / baseyear_production_mt
+
+                            diff = baseline_fuel_mix.copy()
+                            diff["value"] = thisyear_by_fuel["value"] - baseline_fuel_mix["value"]
+
+                            switch_fuels = avail_switch_fuels[process_group_type]
+                            
+                            diff_switch_fuels = diff.copy()
+                            # filter for fuel in switch_fuels
+                            diff_switch_fuels = diff_switch_fuels[diff_switch_fuels["fuel"].isin(switch_fuels)]
+                            diff_switch_fuels.set_index("fuel", inplace=True)
+
+                            # filter for values less than 0
+                            from_fuels = diff_switch_fuels[diff_switch_fuels["value"] < 0]
+                            to_fuels = diff_switch_fuels[diff_switch_fuels["value"] > 0]
+
+                            #logger.info( f"base year:\n{tabulate(baseyear_group_consumption_pj, headers='keys', tablefmt='pretty', showindex=False)}")
+                            #logger.info( f"base year fuel:\n{tabulate(baseyear_by_fuel, headers='keys', tablefmt='pretty', showindex=False)}")
+                            logger.info( f"this year:\n{tabulate(thisyear_group_consumption_pj, headers='keys', tablefmt='pretty', showindex=False)}")
+                            #logger.info( f"this year fuel:\n{tabulate(thisyear_by_fuel, headers='keys', tablefmt='pretty', showindex=False)}")
+                            #logger.info( f"baseline fuel:\n{tabulate(baseline_fuel_mix, headers='keys', tablefmt='pretty', showindex=False)}")
+                            logger.info( f"diff:\n{tabulate(diff, headers='keys', tablefmt='pretty', showindex=False)}")
+                            logger.info( f"diff switch fuels:\n{tabulate(diff_switch_fuels, headers='keys', tablefmt='pretty', showindex=False)}")
+                            #logger.info(f"Switch fuels: {switch_fuels}")
+ 
+                            final_switch = thisyear_group_consumption_pj.copy().groupby("fuel", as_index=False).sum().drop(columns=["process"])
+                            final_switch["entry_type"] = "fuel-switch"
+                            final_switch["fuel-switched-from"] = final_switch["fuel"]
+                            final_switch["fuel-switched-to"] = final_switch["fuel"]
+                            final_switch.set_index("fuel", inplace=True)
+                            final_switch = final_switch[["scen","region","subsector_p","year","fuel-switched-from","fuel-switched-to","value","entry_type"]]
+                            final_remain = final_switch.copy()
+                            final_remain["entry_type"] = "remaining-consumption"
+                            final_switch["value"] = 0.0 
+
+                            if len(from_fuels) == 1 and len(to_fuels) == 1:
+                                logger.info("GOOD FUEL SWITCH")
+                                from_fuel = from_fuels.reset_index()["fuel"].values[0]
+                                to_fuel = to_fuels.reset_index()["fuel"].values[0]
+                                final_switch.loc[from_fuel, "fuel-switched-from"] = from_fuel
+                                final_switch.loc[from_fuel, "fuel-switched-to"] = to_fuel
+                                # add the value to the switch (the strange efficiency-like difference numbers mean we're doing this)
+                                value_to_switch = max(-final_remain.loc[to_fuel, "value"],diff_switch_fuels.loc[from_fuel, "value"])
+                                final_switch.loc[from_fuel, "value"] -= value_to_switch
+                                # remove the value from the remain
+                                final_remain.loc[to_fuel, "value"] += value_to_switch
+                                logger.info(f"Switching {value_to_switch} from {from_fuel} to {to_fuel}")
+                                logger.info(f"Final switch:\n{tabulate(final_switch, headers='keys', tablefmt='pretty', showindex=False)}")
+                                logger.info(f"Final remain:\n{tabulate(final_remain, headers='keys', tablefmt='pretty', showindex=False)}")
+                                # Check we counted everything
+                                assert (final_switch+final_remain)["value"].sum()==thisyear_by_fuel.set_index("fuel")["value"].sum()
+                                print("---")
+                            elif len(from_fuels) == 1 and len(to_fuels) > 1:
+                                logger.warning("BAD FUEL SWITCH LEVEL 1")
+                                logger.info(f"Final switch:\n{tabulate(final_switch, headers='keys', tablefmt='pretty', showindex=False)}")
+                                logger.info(f"Final remain:\n{tabulate(final_remain, headers='keys', tablefmt='pretty', showindex=False)}")
+                                print("---")
+                            elif len(from_fuels) > 1 and len(to_fuels) >= 1:
+                                logger.warning("BAD FUEL SWITCH LEVEL 2")
+                                logger.info(f"Final switch:\n{tabulate(final_switch, headers='keys', tablefmt='pretty', showindex=False)}")
+                                logger.info(f"Final remain:\n{tabulate(final_remain, headers='keys', tablefmt='pretty', showindex=False)}")
+                                print("---")
+                            elif len(from_fuels) > 0 and len(to_fuels) == 0:
+                                logger.info("EFFICIENCY IMPROVEMENT")
+                                logger.info(f"Final switch:\n{tabulate(final_switch, headers='keys', tablefmt='pretty', showindex=False)}")
+                                logger.info(f"Final remain:\n{tabulate(final_remain, headers='keys', tablefmt='pretty', showindex=False)}")
+                                print("---")
                             else:
-                                logger.error( f"The electrification process is not the only process for {scen} {region} {subsector}")
-                            logger.info( f"Process group:\n{tabulate(process_group_consumption_pj, headers='keys', tablefmt='pretty', showindex=False)}")
+                                logger.info("NO CHANGE")
+                                logger.info(f"Final switch:\n{tabulate(final_switch, headers='keys', tablefmt='pretty', showindex=False)}")
+                                logger.info(f"Final remain:\n{tabulate(final_remain, headers='keys', tablefmt='pretty', showindex=False)}")
+                                print("---")
+ 
+                            
 
-                    print("---")
+                            # remove rows with 0 value from process group
+                            #process_group_consumption_pj = process_group_consumption_pj[ process_group_consumption_pj["value"] != 0 ]
+                            # get the electrification processes
+                            electrification_processes = thisyear_group_consumption_pj[
+                                thisyear_group_consumption_pj["process"]
+                                .str.lower()
+                                .str.contains("|".join(electrification_strings))
+                            ]
+                            #if electrification_processes.empty:
+                            if True:
+                                #logger.info( f"No electrification found in {subsector}:{process_group} group")
+                                print("---")
+                            else:
+                                logger.info(f"Electrification found in {subsector}:{process_group} group")
+                                # check if all consumption is in the electric process
+                                if process_group_consumption_pj.equals(electrification_processes):
+                                    logger.info( f"All consumption is in the electric process for {scen} {region} {subsector}")
+                                else:
+                                    logger.error( f"The electrification process is not the only process for {scen} {region} {subsector}")
+                                logger.info( f"Process group:\n{tabulate(process_group_consumption_pj, headers='keys', tablefmt='pretty', showindex=False)}")
 
-                baseline_fuel_mix = baseyear_consumption_pj.groupby(
-                    _cols, as_index=False
-                ).sum()
-                for year in ["2060"]:
-                    year_production_mt = sector_production_mt[
-                        (sector_production_mt["year"] == year)
-                    ]
-                    year_consumption_pj = sector_consumption_pj[
-                        (sector_consumption_pj["year"] == year)
-                    ]
-                    grouped = year_consumption_pj.groupby(_cols, as_index=False)
-                    # loop over each group and print the group
-                    for index, group in grouped:
-                        print(group)
-                        if subsector == "Alumina":
-                            # Calcination
-                            print("---")
+                        print("---")
+
 
     # Create the growth for the industry2 sector
     growth = df[df["is_ind2_p"] == "yes"]
