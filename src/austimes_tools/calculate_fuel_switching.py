@@ -13,14 +13,14 @@ logger.remove()  # Remove default handler
 logger.add(sys.stderr, level="INFO")  # Add handler with stderr as sink
 
 ind2_varbl_process_mapping = {
-    "ucrepi_activity-al": "Alumina",
-    "ucrepi_activity-alum": "Aluminum",
-    "ucrepi_activity-cem": "Cement+",
-    "ucrepi_activity-che": "PetChem",
-    "ucrepi_activity-ironsteel": "Iron and Steel",
+    "Alumina": "UCrepI_Activity-Al",
+    "Aluminum": "UCrepI_Activity-Alum",
+    "Cement+": "UCrepI_Activity-Cem",
+    "PetChem": "UCrepI_Activity-Che",
+    "Iron and Steel": "UCrepI_Activity-IronSteel",
 }
-ind2_output_varbls = ind2_varbl_process_mapping.keys()
- 
+ind2_output_varbls = list(ind2_varbl_process_mapping.values())
+
 IND2_process_name_col = "commodity"
 IND2_process_prefix = "IND2"
 IND2_from_fuel_mapping = {
@@ -265,6 +265,76 @@ def create_industry2_df(df: pd.DataFrame, years: list[str], csv_cols: list[str])
     # find all entries of df["fuel] == "Natural gas" and set them to "Natural Gas"
     df.loc[df["fuel"] == "Natural gas", "fuel"] = "Natural Gas"
 
+    # alumina production
+    subsectors = ["Alumina", "Aluminum", "Cement+", "PetChem", "Iron and Steel"]
+    # melt the dataframe
+    all_cols_not_years = [col for col in df.columns if col not in years]
+
+    consumption_pj = df[(df["varbl"].isin(["FinEn_consumed"]) & (df["is_ind2_p"].isin(["yes"])))]
+    consumption_pj = consumption_pj.melt(id_vars=all_cols_not_years, value_vars=years, var_name="year")
+    consumption_pj = consumption_pj.groupby(all_cols_not_years + ["year"]).sum().reset_index()
+
+    production_mt = df[(df["varbl"].isin(ind2_output_varbls)) & (df["is_ind2_p"].isin(["yes"]))]
+    production_mt = production_mt.melt(id_vars=all_cols_not_years, value_vars=years, var_name="year")
+    production_mt = production_mt.groupby(all_cols_not_years + ["year"]).sum().reset_index()
+
+    cols_to_keep = _cols + ["year","fuel","value","varbl","process"]
+
+    consumption_pj = consumption_pj[cols_to_keep]
+    production_mt = production_mt[cols_to_keep]
+    scenarios = consumption_pj["scen"].unique()
+    regions = consumption_pj["region"].unique()
+
+    # melt the dataframe
+    for scen in scenarios:
+        scen_consumption_pj = consumption_pj[consumption_pj["scen"] == scen]
+        scen_production_mt = production_mt[production_mt["scen"] == scen]
+        for region in regions:
+            region_production_mt = scen_production_mt[scen_production_mt["region"] == region]
+            region_consumption_pj = scen_consumption_pj[scen_consumption_pj["region"] == region]
+            for subsector in subsectors:
+                sector_prod_varbl = ind2_varbl_process_mapping[subsector]
+                sector_production_mt = region_production_mt[(region_production_mt["subsector_p"] == subsector) & (region_production_mt["varbl"] == sector_prod_varbl)]
+                sector_consumption_pj = region_consumption_pj[region_consumption_pj["subsector_p"] == subsector]
+
+                baseyear_production_mt = sector_production_mt[(sector_production_mt["year"] == years[0])]
+                baseyear_consumption_pj = sector_consumption_pj[(sector_consumption_pj["year"] == years[0])]
+
+                # Get baseline fuel mix
+                if subsector == "Alumina":
+                    electrification_strings = ["electric"] 
+                    process_groups = ["calcination"]
+                    for process_group in process_groups:
+                        # get the process group
+                        process_group_consumption_pj = baseyear_consumption_pj[baseyear_consumption_pj["process"].str.lower().str.contains(process_group)]
+                        # remove rows with 0 value from process group
+                        process_group_consumption_pj = process_group_consumption_pj[process_group_consumption_pj["value"] != 0]
+                        # get the electrification processes
+                        electrification_processes = process_group_consumption_pj[process_group_consumption_pj["process"].str.lower().str.contains("|".join(electrification_strings))]
+                        if electrification_processes.empty:
+                            logger.info(f"No electrification found in {process_group} group for {scen} {region} {subsector}")
+                        else:
+                            logger.info(f"Electrification found in {process_group} group for {scen} {region} {subsector}")
+                            # check if all consumption is in the electric process
+                            if process_group_consumption_pj.equals(electrification_processes):
+                                logger.info(f"All consumption is in the electric process for {scen} {region} {subsector}")
+                            else:
+                                logger.error(f"The electrification process is not the only process for {scen} {region} {subsector}")
+
+                    print("---")
+
+                baseline_fuel_mix = baseyear_consumption_pj.groupby(_cols, as_index=False).sum()
+                for year in ["2060"]:
+                    year_production_mt = sector_production_mt[(sector_production_mt["year"] == year)]
+                    year_consumption_pj = sector_consumption_pj[(sector_consumption_pj["year"] == year)]
+                    grouped = year_consumption_pj.groupby(_cols, as_index=False)
+                    # loop over each group and print the group
+                    for index, group in grouped:
+                        print(group)
+                        if subsector == "Alumina":
+                            # Calcination
+                            print("---")
+
     # Create the growth for the industry2 sector
     growth = df[df["is_ind2_p"] == "yes"]
     growth = growth[growth["varbl"].isin(["feedstock_consumption"])]
@@ -301,6 +371,13 @@ def create_industry2_df(df: pd.DataFrame, years: list[str], csv_cols: list[str])
             logger.info(f"Year: {year}, Value: {row[year]}, Baseline Value: {baseline_value}")
             row[year] = row[year] / baseline_value
         growth2.loc[index] = row
+
+    # Create a group for each scen, region, subsector_p and year and then iterate through each group
+    grouped = growth2.groupby(_cols)
+    for index, group in grouped:
+        print(index)
+        print(group)
+        print("---")
 
 
     # Create the baseline fuel consumption of the industry2 sector
@@ -440,7 +517,12 @@ def calculate_fuel_switching_logic(file_path: Path | str) -> None:
             raise ValueError("File must be CSV or Excel (.csv, .xlsx, .xls)")
 
         # filter out varbl = ["FinEn_AEMO", "FinEn_AEMO_eneff", "FinEn_enser", "FinEn_consumed","feedstock_consumption"]+ind2_varbl_process_mapping.keys()
-        df = df[df["varbl"].isin(["FinEn_AEMO", "FinEn_AEMO_eneff", "FinEn_enser", "FinEn_consumed","feedstock_consumption"]+list(ind2_varbl_process_mapping.keys()))]
+        if not all(varbl in df["varbl"].unique() for varbl in ind2_output_varbls):
+            logger.warning("No industry2 output varbls found in the dataframe")
+            logger.warning(f"Unique varbls: {df['varbl'].unique()}")
+            logger.warning(f"ind2_output_varbls: {ind2_output_varbls}")
+            raise ValueError("No industry2 output varbls found in the dataframe")
+        df = df[df["varbl"].isin(["FinEn_AEMO", "FinEn_AEMO_eneff", "FinEn_enser", "FinEn_consumed","feedstock_consumption"]+ind2_output_varbls)]
 
         # Cache the dataframe
         logger.info(f"Caching data to: {cache_path}")
@@ -486,7 +568,7 @@ def calculate_fuel_switching_logic(file_path: Path | str) -> None:
     # Loop through each process and calculate the fuel switching
 
     # sectors to process
-    sectors = ["Industry", "Commercial", "Residential"]
+    sectors = []#["Industry", "Commercial", "Residential"]
     sector_prefix_mapping = {
         "Industry": "ES",
         "Transport": "TR",
