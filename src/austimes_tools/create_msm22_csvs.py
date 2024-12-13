@@ -26,32 +26,237 @@ TEMPLATE_PATH = (
 )
 
 CSV_COLUMN_ORDER_MAPPING = {
-    "Elec fuels": ["model", "study", "region", "isp_subregion", "year", "unit", "varbl", "fuel", "scen", "tech", "val"],
-    "CO2 emissions - non bldg+ind": ["model", "region", "isp_subregion", "year", "unit", "emission_type", "enduse", "scen", "sector", "state", "subsector_p", "tech", "val"],
-    "CO2 emissions - Industry - Process": ["region", "isp_subregion", "year", "unit", "ee_category", "endusegroup_p", "scen", "source", "val"],
-    "CO2 emissions - Residential": ["sector", "scen", "region", "year", "enduse", "source", "val"],
-    "Elec capacity and generation": ["model", "study", "region", "isp_subregion", "year", "unit", "varbl", "fuel", "scen", "tech", "val"],
-    "EnEff Buildings": ["model", "study", "region", "isp_subregion","year", "unit", "varbl", "buildingtype", "ee_category", "enduse", "fuel", "scen", "source", "val"],
-    "EnEff Industry": ["model", "study", "region", "isp_subregion", "year", "unit", "varbl", "ee_category", "fuel", "nemreg", "scen", "source", "subsectorgroup_c", "val"],
-    "Fin Energy Residential": ["model", "study", "region", "isp_subregion", "year", "unit", "varbl", "enduse", "fuel", "fuel_switched", "scen", "source", "subsector_p", "val"],
-    "Fin energy Transport": ["region", "isp_subregion","year", "unit", "varbl", "enduse", "fuel", "scen", "subsector_p", "tech", "val"],
-    #"Fuels switched industry": ["sector", "scen", "region", "isp_subregion", "year", "source", "subsectorgroup_c", "fuel_switched_from", "fuel_switched_to", "hydrogen_source", "PJ_switched"],
-    "Hydrogen capacity and generation": ["model", "study", "region", "year", "unit", "varbl", "process", "scen", "tech", "val"],
-    "Hydrogen generation by timeslice": ["model", "study", "region", "year", "unit", "varbl", "process", "scen", "tech", "timeslice", "val"],
-    "Hydrogen exports": ["model", "study", "region", "year", "unit", "varbl", "scen", "val"],
-    "Hydrogen fuels": ["model", "study", "region", "year", "unit", "process", "commodity", "fuel", "scen", "tech", "val"],
-    "IND2 fuel and feedstock": ["study","scen","region","isp_subregion","sector","fuel","commodity","unit","year","val"],
-    "IND2 emissions": ["study","scen","region","isp_subregion","sector","commodity","unit","year","val"],
+    "Elec fuels": [
+        "model",
+        "study",
+        "region",
+        "isp_subregion",
+        "year",
+        "unit",
+        "varbl",
+        "fuel",
+        "scen",
+        "tech",
+        "val",
+    ],
+    "CO2 emissions - non bldg+ind": [
+        "model",
+        "region",
+        "isp_subregion",
+        "year",
+        "unit",
+        "emission_type",
+        "enduse",
+        "scen",
+        "sector",
+        "state",
+        "subsector_p",
+        "tech",
+        "val",
+    ],
+    "CO2 emissions - Industry - Process": [
+        "region",
+        "isp_subregion",
+        "year",
+        "unit",
+        "ee_category",
+        "endusegroup_p",
+        "scen",
+        "source",
+        "val",
+    ],
+    "CO2 emissions - Residential": [
+        "sector",
+        "scen",
+        "region",
+        "year",
+        "enduse",
+        "source",
+        "val",
+    ],
+    "Elec capacity and generation": [
+        "model",
+        "study",
+        "region",
+        "isp_subregion",
+        "year",
+        "unit",
+        "varbl",
+        "fuel",
+        "scen",
+        "tech",
+        "val",
+    ],
+    "EnEff Buildings": [
+        "model",
+        "study",
+        "region",
+        "isp_subregion",
+        "year",
+        "unit",
+        "varbl",
+        "buildingtype",
+        "ee_category",
+        "enduse",
+        "fuel",
+        "scen",
+        "source",
+        "val",
+    ],
+    "EnEff Industry": [
+        "model",
+        "study",
+        "region",
+        "isp_subregion",
+        "year",
+        "unit",
+        "varbl",
+        "ee_category",
+        "fuel",
+        "nemreg",
+        "scen",
+        "source",
+        "subsectorgroup_c",
+        "val",
+    ],
+    "Fin Energy Residential": [
+        "model",
+        "study",
+        "region",
+        "isp_subregion",
+        "year",
+        "unit",
+        "varbl",
+        "enduse",
+        "fuel",
+        "fuel_switched",
+        "scen",
+        "source",
+        "subsector_p",
+        "val",
+    ],
+    "Fin energy Transport": [
+        "region",
+        "isp_subregion",
+        "year",
+        "unit",
+        "varbl",
+        "enduse",
+        "fuel",
+        "scen",
+        "subsector_p",
+        "tech",
+        "val",
+    ],
+    # "Fuels switched industry": ["sector", "scen", "region", "isp_subregion", "year", "source", "subsectorgroup_c", "fuel_switched_from", "fuel_switched_to", "hydrogen_source", "PJ_switched"],
+    "Hydrogen capacity and generation": [
+        "model",
+        "study",
+        "region",
+        "year",
+        "unit",
+        "varbl",
+        "process",
+        "scen",
+        "tech",
+        "val",
+    ],
+    "Hydrogen generation by timeslice": [
+        "model",
+        "study",
+        "region",
+        "year",
+        "unit",
+        "varbl",
+        "process",
+        "scen",
+        "tech",
+        "timeslice",
+        "val",
+    ],
+    "Hydrogen exports": [
+        "model",
+        "study",
+        "region",
+        "year",
+        "unit",
+        "varbl",
+        "scen",
+        "val",
+    ],
+    "Hydrogen fuels": [
+        "model",
+        "study",
+        "region",
+        "year",
+        "unit",
+        "process",
+        "commodity",
+        "fuel",
+        "scen",
+        "tech",
+        "val",
+    ],
+    "IND2 fuel and feedstock": [
+        "study",
+        "scen",
+        "region",
+        "isp_subregion",
+        "sector",
+        "fuel",
+        "commodity",
+        "unit",
+        "year",
+        "val",
+    ],
+    "IND2 emissions": [
+        "study",
+        "scen",
+        "region",
+        "isp_subregion",
+        "sector",
+        "commodity",
+        "unit",
+        "year",
+        "val",
+    ],
     # These two match the columns in the FE_template.xlsx, not the final CSVs
-    "Commercial FE with EnInt": ["sector_p", "scen", "region", "isp_subregion", "year", "enduse", "source_p", "buildingtype", "fuel", "fuel_override", "fuel_switched", "IESTCS_EnInt", "IESTCS_Out"],
-    "Industry FE with EnInt": ["sector_p", "scen", "region", "isp_subregion", "year", "process", "source_p", "hydrogen_source", "fuel", "fuel_override", "subsectorgroup_c", "IESTCS_EnInt", "IESTCS_Out"],
-    
+    "Commercial FE with EnInt": [
+        "sector_p",
+        "scen",
+        "region",
+        "isp_subregion",
+        "year",
+        "enduse",
+        "source_p",
+        "buildingtype",
+        "fuel",
+        "fuel_override",
+        "fuel_switched",
+        "IESTCS_EnInt",
+        "IESTCS_Out",
+    ],
+    "Industry FE with EnInt": [
+        "sector_p",
+        "scen",
+        "region",
+        "isp_subregion",
+        "year",
+        "process",
+        "source_p",
+        "hydrogen_source",
+        "fuel",
+        "fuel_override",
+        "subsectorgroup_c",
+        "IESTCS_EnInt",
+        "IESTCS_Out",
+    ],
 }
 
 CSV_TO_FILTER_OUT_MAPPING = {
-    "CO2 emissions - Industry - Process": {"source":["-"]},
-    "EnEff Buildings": {"ee_category":["Frontier levers"]},
-    "Hydrogen generation by timeslice": {"process":["H2prd_SMR","H2prd_SMR_ccs"]},
+    "CO2 emissions - Industry - Process": {"source": ["-"]},
+    "EnEff Buildings": {"ee_category": ["Frontier levers"]},
+    "Hydrogen generation by timeslice": {"process": ["H2prd_SMR", "H2prd_SMR_ccs"]},
 }
 
 
@@ -59,8 +264,8 @@ CSV_TO_FILTER_OUT_MAPPING = {
 SHEET_NAME_MAPPING = {
     "MSM22 CO2 emis-ind-proc": "CO2 emissions - Industry - Process",
     "MSM22 emis-non-bldg+ind": "CO2 emissions - non bldg+ind",
-    #"MSM22 Commercial FE with EnInt": "Fin Energy Commercial",
-    #"MSM22 Industry FE with EnInt": "Fin Energy Industry",
+    # "MSM22 Commercial FE with EnInt": "Fin Energy Commercial",
+    # "MSM22 Industry FE with EnInt": "Fin Energy Industry",
     "MSM22 Elec cap and gen": "Elec capacity and generation",
     "MSM22 Elec fuels": "Elec fuels",
     "MSM22 EnEff Buildings": "EnEff Buildings",
@@ -83,16 +288,19 @@ SHEET_NAME_MAPPING = {
 # Add this near the top of the file with other imports
 pd.set_option("future.no_silent_downcasting", True)
 
+
 def is_valid_results_file(filename: str) -> bool:
     """Check if filename matches the results_YYYYMMDD-HHMMSS.xlsx pattern."""
     pattern = r"results_\d{8}-\d{6}\.xlsx$"
     return bool(re.match(pattern, filename))
+
 
 def extract_datetime(filename: str) -> datetime:
     """Extract datetime from results filename."""
     # Extract YYYYMMDD-HHMMSS from the filename
     date_str = re.search(r"(\d{8}-\d{6})", filename).group(1)
     return datetime.strptime(date_str, "%Y%m%d-%H%M%S")
+
 
 def process_msm22_csvs(input_dir: Path | str) -> None:
     """Process MSM22 files from a directory and create CSVs.
@@ -110,17 +318,18 @@ def process_msm22_csvs(input_dir: Path | str) -> None:
 
     # Find all Excel files in directory that match the pattern
     excel_files = [
-        f for f in input_path.glob("*.xlsx") 
-        if is_valid_results_file(f.name)
+        f for f in input_path.glob("*.xlsx") if is_valid_results_file(f.name)
     ]
-    
+
     if not excel_files:
-        logger.info(f"Files found in directory: {[f.name for f in input_path.glob('*.xlsx')]}")
+        logger.info(
+            f"Files found in directory: {[f.name for f in input_path.glob('*.xlsx')]}"
+        )
         raise ValueError(f"No valid results files found in {input_path}")
 
     # Sort files by datetime (oldest first)
     excel_files.sort(key=lambda x: extract_datetime(x.name))
-    
+
     logger.info(f"Found {len(excel_files)} valid results files")
     for file in excel_files:
         logger.info(f"  {file.name} ({extract_datetime(file.name)})")
@@ -149,7 +358,10 @@ def process_msm22_csvs(input_dir: Path | str) -> None:
             df = df.replace("-", np.nan)
 
             # Override fuel
-            if sheet_name not in ["MSM22 Commercial FE with EnInt", "MSM22 Industry FE with EnInt"]:
+            if sheet_name not in [
+                "MSM22 Commercial FE with EnInt",
+                "MSM22 Industry FE with EnInt",
+            ]:
                 if "fuel_override" in df.columns:
                     mask = df["fuel_override"].notna()
                     df.loc[mask, "fuel"] = df.loc[mask, "fuel_override"]
@@ -162,12 +374,17 @@ def process_msm22_csvs(input_dir: Path | str) -> None:
                 df = df.drop(columns=["isp_subregion_override"])
 
             # Rename columns
-            df = df.rename(
-                columns={"GrandTotal": "val"}
-            )
-            if sheet_name not in ["MSM22 Commercial FE with EnInt", "MSM22 Industry FE with EnInt"]:
+            df = df.rename(columns={"GrandTotal": "val"})
+            if sheet_name not in [
+                "MSM22 Commercial FE with EnInt",
+                "MSM22 Industry FE with EnInt",
+            ]:
                 df = df.rename(
-                    columns={"source_p": "source", "sector_p": "sector", "GrandTotal": "val"}
+                    columns={
+                        "source_p": "source",
+                        "sector_p": "sector",
+                        "GrandTotal": "val",
+                    }
                 )
 
             ## Replace NaN with "-"
@@ -228,11 +445,12 @@ def process_msm22_csvs(input_dir: Path | str) -> None:
                     rows_before = len(df)
                     df = df[~df[col].isin(values)]
                     rows_removed = rows_before - len(df)
-                    logger.info(f"Filtered out {rows_removed} rows where {col} matched {values}")
+                    logger.info(
+                        f"Filtered out {rows_removed} rows where {col} matched {values}"
+                    )
                     # log new unique values
                     new_unique_vals = df[col].unique()
                     logger.info(f"New unique values in {col}: {new_unique_vals}")
-
 
             # Group by all columns except val and sum (again after dropping rows in the filter)
             if csv_name not in ["Commercial FE with EnInt", "Industry FE with EnInt"]:
@@ -248,12 +466,19 @@ def process_msm22_csvs(input_dir: Path | str) -> None:
 
             drop_isp_subregion = True
             if drop_isp_subregion:
-                if csv_name not in ["Commercial FE with EnInt", "Industry FE with EnInt"]:
+                if csv_name not in [
+                    "Commercial FE with EnInt",
+                    "Industry FE with EnInt",
+                ]:
                     # drop the isp_subregion column
                     if "isp_subregion" in df.columns:
                         df = df.drop(columns=["isp_subregion"])
                     # run a groupby on the remaining columns and sum the val column
-                    column_order_no_isp = [col for col in column_order if col not in ["isp_subregion", "val"]]
+                    column_order_no_isp = [
+                        col
+                        for col in column_order
+                        if col not in ["isp_subregion", "val"]
+                    ]
                     df = df.groupby(column_order_no_isp, as_index=False).sum()
 
             # Replace "-" with None
@@ -262,6 +487,7 @@ def process_msm22_csvs(input_dir: Path | str) -> None:
             csv_path = output_path / f"{csv_name}.csv"
             df.to_csv(csv_path, index=False)
             logger.info(f"Created CSV file: {csv_path}")
+
 
 def process_energy_intensity(input_dir: Path | str) -> None:
     """Process energy intensity files using the already processed CSVs.
@@ -303,11 +529,15 @@ def process_energy_intensity(input_dir: Path | str) -> None:
 
     # ensure the IESTCS_EnInt and IESTCS_Out columns are floats
     for sheet, df in processed_dfs.items():
-        processed_dfs[sheet]["IESTCS_EnInt"] = processed_dfs[sheet]["IESTCS_EnInt"].astype(float)
-        processed_dfs[sheet]["IESTCS_Out"] = processed_dfs[sheet]["IESTCS_Out"].astype(float)
+        processed_dfs[sheet]["IESTCS_EnInt"] = processed_dfs[sheet][
+            "IESTCS_EnInt"
+        ].astype(float)
+        processed_dfs[sheet]["IESTCS_Out"] = processed_dfs[sheet]["IESTCS_Out"].astype(
+            float
+        )
 
     ## We need to sort by the process, and then fuel column for industry, and enduse, then fuel for commercial
-    #for sheet, df in processed_dfs.items():
+    # for sheet, df in processed_dfs.items():
     #    processed_dfs[sheet] = df.sort_values(by=["fuel"], ascending=False)
     #    if sheet == "Industry FE with EnInt":
     #        processed_dfs[sheet] = df.sort_values(by=["process"])
@@ -322,7 +552,7 @@ def process_energy_intensity(input_dir: Path | str) -> None:
         ws = wb[sheet]
         template_columns = [col.value for col in ws[1]]
         processed_columns = processed_df.columns.tolist()
-        template_columns = template_columns[:len(processed_columns)]
+        template_columns = template_columns[: len(processed_columns)]
         if template_columns != processed_columns:
             print(f"Template columns: {template_columns}")
             print(f"CSV columns: {processed_columns}")
@@ -357,6 +587,7 @@ def process_energy_intensity(input_dir: Path | str) -> None:
     # Recalculate formulas using xlwings
     try:
         import xlwings as xw
+
         wb = xw.Book(output_file)
         wb.save()
         wb.close()
@@ -373,7 +604,7 @@ def process_energy_intensity(input_dir: Path | str) -> None:
             usecols="A:Q",
             engine_kwargs={"data_only": True},
         )
-        
+
         # Drop rows where IESTCS_Out is NaN or missing
         df = df.dropna(subset=["IESTCS_Out"])
         logger.info(f"Columns in processed file: {df.columns.tolist()}")
@@ -384,11 +615,30 @@ def process_energy_intensity(input_dir: Path | str) -> None:
         if sheet == "Commercial FE with EnInt":
             emissions_csv_name = "CO2 emissions Commercial"
             fin_energy_csv_name = "Final Energy Commercial"
-            cols = ["sector", "scen", "region", "year", "enduse", "source", "buildingtype", "fuel_switched", "fuel"] 
+            cols = [
+                "sector",
+                "scen",
+                "region",
+                "year",
+                "enduse",
+                "source",
+                "buildingtype",
+                "fuel_switched",
+                "fuel",
+            ]
         else:
             emissions_csv_name = "CO2 emissions Industry"
             fin_energy_csv_name = "Final Energy Industry"
-            cols = ["sector", "scen", "region", "year", "source", "hydrogen_source", "subsectorgroup_c", "fuel"]
+            cols = [
+                "sector",
+                "scen",
+                "region",
+                "year",
+                "source",
+                "hydrogen_source",
+                "subsectorgroup_c",
+                "fuel",
+            ]
 
         # Create emissions CSV
         logger.info(f"Creating emissions CSV: {emissions_csv_name}")
@@ -403,6 +653,7 @@ def process_energy_intensity(input_dir: Path | str) -> None:
         fin_energy_df = fin_energy_df.fillna("-")
         fin_energy_df = fin_energy_df.groupby(cols, as_index=False).sum()
         fin_energy_df.to_csv(output_path / f"{fin_energy_csv_name}.csv", index=False)
+
 
 @click.command()
 @click.argument("input_path", type=click.Path(exists=True))
@@ -433,15 +684,15 @@ def process_msm22_files(input_path, no_en_int, en_int_only):
     """
     if en_int_only and no_en_int:
         raise click.UsageError("Cannot use both --en-int-only and --no-en-int")
-    
+
     if not en_int_only:
         process_msm22_csvs(input_path)
-    
+
     if not no_en_int or en_int_only:
         process_energy_intensity(input_path)
 
+
 if __name__ == "__main__":
     input_path = "D:/gre538/Model_Aus_TIMES-msm24-004a/Exported_files/"
-    #process_msm22_csvs(input_path)
+    # process_msm22_csvs(input_path)
     process_energy_intensity(input_path)
-
