@@ -328,10 +328,12 @@ def create_industry2_df(
                         "all":["Coal","Natural Gas","Hydrogen","Oil","Electricity"]
                         }
 
+                    multi_to_multi_rules = {"blr": [("Coal","Electricity"),("Natural Gas","Hydrogen")]}
+
                     # Get baseline fuel mix
                     if subsector == "Alumina":
                         electrification_strings = ["electric"]
-                        process_groups = [("calcination","all"), ("mining","fossil")] #, ("blr","blr"), ("bayer","heat")]
+                        process_groups = [("blr","fossil")] #[("calcination","fossil"), ("mining","fossil")] #, ("blr","blr"), ("bayer","heat")]
                         for process_group, process_group_type in process_groups:
                             logger.info("==================================================================================================")
                             logger.info(f"Processing group: {process_group}")
@@ -343,34 +345,35 @@ def create_industry2_df(
                             baseyear_by_fuel = baseyear_group_consumption_pj.groupby("fuel", as_index=False).sum().drop(columns=["scen","region","process","subsector_p","year"])
                             thisyear_by_fuel = thisyear_group_consumption_pj.groupby("fuel", as_index=False).sum().drop(columns=["scen","region","process","subsector_p","year"])
 
-                            baseline_fuel_mix = baseyear_by_fuel.copy()
-                            baseline_fuel_mix["value"] = baseline_fuel_mix["value"] * thisyear_production_mt / baseyear_production_mt
+                            baseline_fuel_consumption = baseyear_by_fuel.copy()
+                            baseline_fuel_consumption["value"] = baseline_fuel_consumption["value"] * thisyear_production_mt / baseyear_production_mt
 
-                            diff = baseline_fuel_mix.copy()
-                            diff["value"] = thisyear_by_fuel["value"] - baseline_fuel_mix["value"]
+                            diff = baseline_fuel_consumption.copy()
+                            diff["value"] = thisyear_by_fuel["value"] - baseline_fuel_consumption["value"]
+                            diff.set_index("fuel", inplace=True)
+                            diff_switch_fuels = diff.copy()
 
                             fuels_allowed_to_be_switched_from = sets_of_fuels_allowed_to_be_switched_from[process_group_type]
                             
-                            diff_switch_fuels = diff.copy()
-                            # filter for fuel in switch_fuels
-                            #diff_switch_fuels = diff_switch_fuels[diff_switch_fuels["fuel"].isin(fuels_allowed_to_be_switched_from)]
-                            diff_switch_fuels.set_index("fuel", inplace=True)
-
                             # filter for values less than 0
-                            from_fuels = diff_switch_fuels.loc[diff_switch_fuels.index.isin(fuels_allowed_to_be_switched_from)][diff_switch_fuels["value"] < 0] # only allow switching from the fuels allowed
+                            from_fuels = diff_switch_fuels[diff_switch_fuels.index.isin(fuels_allowed_to_be_switched_from)]
+                            from_fuels = from_fuels[from_fuels["value"] < 0]
                             to_fuels = diff_switch_fuels[diff_switch_fuels["value"] > 0]
 
-                            # get the fractional version of the to_fuels
+                            # get the fractional version of the to_fuels (this could be efficiency based, but this will do for now)
                             to_fuels_fraction = to_fuels.copy()
                             to_fuels_fraction["value"] = to_fuels["value"] / to_fuels["value"].sum()
+
+                            from_fuels_fraction = from_fuels.copy()
+                            from_fuels_fraction["value"] = from_fuels["value"] / from_fuels["value"].sum()
 
                             #logger.info( f"base year:\n{tabulate(baseyear_group_consumption_pj, headers='keys', tablefmt='pretty', showindex=False)}")
                             #logger.info( f"base year fuel:\n{tabulate(baseyear_by_fuel, headers='keys', tablefmt='pretty', showindex=False)}")
                             logger.info( f"this year:\n{tabulate(thisyear_group_consumption_pj, headers='keys', tablefmt='pretty', showindex=False)}")
                             logger.info( f"this year fuel:\n{tabulate(thisyear_by_fuel, headers='keys', tablefmt='pretty', showindex=False)}")
-                            logger.info( f"baseline fuel:\n{tabulate(baseline_fuel_mix, headers='keys', tablefmt='pretty', showindex=False)}")
-                            logger.info( f"diff:\n{tabulate(diff, headers='keys', tablefmt='pretty', showindex=False)}")
-                            logger.info( f"diff switch fuels:\n{tabulate(diff_switch_fuels.reset_index(), headers='keys', tablefmt='pretty', showindex=False)}")
+                            logger.info( f"baseline fuel:\n{tabulate(baseline_fuel_consumption, headers='keys', tablefmt='pretty', showindex=False)}")
+                            logger.info( f"diff:\n{tabulate(diff.reset_index(), headers='keys', tablefmt='pretty', showindex=False)}")
+                            #logger.info( f"diff switch fuels:\n{tabulate(diff_switch_fuels.reset_index(), headers='keys', tablefmt='pretty', showindex=False)}")
                             #logger.info(f"Switch fuels: {switch_fuels}")
 
                             # this block just creates the switched and unswitched dataframes with the default being zero switched and all unswitched
@@ -391,7 +394,15 @@ def create_industry2_df(
                             switched = switched.drop(index=template_row.index)
                             # add a row for each from_fuel / to_fuel pair
                             for from_fuel in from_fuels.reset_index()["fuel"].values:
+                                # add an energy efficiency row for each from_fuel
+                                new_row = template_row.loc[template_index].copy()
+                                new_row["fuel-switched-to"] = from_fuel
+                                new_row["fuel-switched-from"] = from_fuel
+                                new_row["value"] = 0.0
+                                new_row["entry_type"] = "efficiency-improvement"
+                                switched = pd.concat([switched, new_row.to_frame().T])
                                 for to_fuel in to_fuels.reset_index()["fuel"].values:
+                                    # add a fuel switch row for each from_fuel / to_fuel pair
                                     new_row = template_row.loc[template_index].copy()
                                     new_row["fuel-switched-to"] = to_fuel
                                     new_row["fuel-switched-from"] = from_fuel
@@ -401,36 +412,61 @@ def create_industry2_df(
                             switched = switched.reset_index(drop=True)
                             switched.set_index(["fuel-switched-from","fuel-switched-to"], inplace=True)
 
-                            if len(from_fuels) == 1 and len(to_fuels) >= 1:
+                            switched = switched.sort_index()
+                            unswitched = unswitched.sort_index()
+
+                            diff_backup = diff.copy()
+
+                            multi_to_multi = (len(from_fuels) > 1 and len(to_fuels) > 1)
+
+                            if (len(from_fuels) == 1 and len(to_fuels) >= 1) or (len(from_fuels) > 1 and len(to_fuels) == 1) or multi_to_multi:
                                 logger.info(f"GOOD FUEL SWITCH: {len(from_fuels)} FROM, {len(to_fuels)} TO")
-                                for to_fuel in to_fuels.reset_index()["fuel"].values:
+                                for from_fuel in from_fuels.reset_index()["fuel"].values:
+                                    for to_fuel in to_fuels.reset_index()["fuel"].values:
 
-                                    from_fuel = from_fuels.reset_index()["fuel"].values[0]
-                                    total_to_switch_value = -diff_switch_fuels.loc[from_fuel, "value"]
-                                    this_fraction = to_fuels_fraction.loc[to_fuel, "value"]
-                                    try_to_switch_value = total_to_switch_value*this_fraction
-                                    assert try_to_switch_value > 0
+                                        fraction_of_from_fuel = to_fuels_fraction.loc[to_fuel, "value"]
+                                        fraction_of_to_fuel = from_fuels_fraction.loc[from_fuel, "value"]
+ 
+                                        if multi_to_multi:
+                                            # when there is no way to split the fuel, we just assume some rules
+                                            fraction_of_from_fuel = 1.0
+                                            fraction_of_to_fuel = 1.0
+                                            if (from_fuel, to_fuel) not in multi_to_multi_rules[process_group]:
+                                                continue
 
-                                    logger.info(f"Switching {this_fraction*100:.0f}% of {total_to_switch_value:.2f} ({try_to_switch_value:.2f} PJ) of {from_fuel} to {to_fuel}")
+                                        all_to_fuel_switched_value = -diff_switch_fuels.loc[from_fuel, "value"]
+                                        from_switched_value = all_to_fuel_switched_value*fraction_of_from_fuel
+                                        assert from_switched_value > 0
+                                        to_switched_value = diff_backup.loc[to_fuel, "value"]*fraction_of_to_fuel
+                                        assert to_switched_value > 0
+                                        logger.info(f"Switching {fraction_of_from_fuel*100:.0f}% of {all_to_fuel_switched_value:.2f} ({from_switched_value:.2f} PJ) of {from_fuel} to {to_fuel}")
+                                        # add the value to the switch
+                                        switched.loc[(from_fuel, to_fuel), "value"] += from_switched_value
+                                        logger.info(f"Added {from_switched_value:.2f} PJ to switched {from_fuel} to {to_fuel}")
+                                        # remove the to_switched_value from the unswitched
+                                        unswitched.loc[to_fuel, "value"] -= to_switched_value
+                                        logger.info(f"Removed {to_switched_value:.2f} PJ from unswitched {to_fuel}")
+                                        # add the switch from the diff (not diff_switch_fuels) such that what remains must be energy efficiency related
+                                        diff.loc[from_fuel, "value"] += from_switched_value
+                                        diff.loc[to_fuel, "value"] -= to_switched_value
+                                        logger.info( f"remaining diff:\n{tabulate(diff.reset_index(), headers='keys', tablefmt='pretty', showindex=False)}")
+                                        # If to_fuel is Electricity, then set entry_type to electrification
+                                        if to_fuel == "Electricity":
+                                            switched.loc[(from_fuel, to_fuel), "entry_type"] = "electrification"
 
-                                    #switched.loc[from_fuel, "fuel-switched-from"] = from_fuel
-                                    #switched.loc[from_fuel, "fuel-switched-to"] = to_fuel
 
-                                    # calculate the value to the switch (the strange efficiency-like difference numbers mean we're doing this)
-                                    avail_to_switch_value = unswitched.loc[to_fuel, "value"] # the fraction only applies to the from_fuel
-                                    value_to_switch = min(try_to_switch_value, avail_to_switch_value)
-                                    assert value_to_switch > 0
-                                    logger.info(f"Adjusted value is {value_to_switch:.2f} PJ of {from_fuel} to {to_fuel}")
-                                    # add the value to the switch
-                                    switched.loc[(from_fuel, to_fuel), "value"] += value_to_switch
-                                    logger.info(f"Added {value_to_switch:.2f} PJ to switched {from_fuel} to {to_fuel}")
-                                    # remove the value from the remain
-                                    unswitched.loc[to_fuel, "value"] -= value_to_switch
-                                    logger.info(f"Subtracted {value_to_switch:.2f} from unswitched {to_fuel}")
+                                # for each non-zero entry remaining in diff, index into switched as (from_fuel, from_fuel) and set the value to the remaining diff and entry_type to efficiency-improvement
+                                for fuel in diff.reset_index()["fuel"].values:
+                                    if not np.isclose(diff.loc[fuel, "value"], 0, atol=1e-12):
+                                        efficiency_value = -diff.loc[fuel, "value"]
+                                        assert efficiency_value > 0
+                                        switched.loc[(fuel, fuel), "value"] = efficiency_value
+                                        switched.loc[(fuel, fuel), "entry_type"] = "efficiency-improvement"
+                                        # add this into diff
+                                        diff.loc[fuel, "value"] += efficiency_value
 
-                                # If to_fuel is Electricity, then set entry_type to electrification
-                                if to_fuel == "Electricity":
-                                    switched.loc[from_fuel, "entry_type"] = "electrification"
+                                # assert that all values in diff are zero
+                                assert np.isclose(diff["value"], 0, atol=1e-12).all()
 
                                 # Drop rows with zero value in switched
                                 switched = switched[switched["value"] != 0]
@@ -443,7 +479,7 @@ def create_industry2_df(
                                 assert (unswitched["value"] >= 0).all()
                                 # Check we counted everything
                                 left_sum = switched["value"].sum() + unswitched["value"].sum()
-                                right_sum = thisyear_by_fuel.set_index("fuel")["value"].sum()
+                                right_sum = baseline_fuel_consumption.set_index("fuel")["value"].sum()
                                 if not np.isclose(left_sum, right_sum, rtol=1e-8):
                                     print(f"Left side: {left_sum}")
                                     print(f"Right side: {right_sum}")
