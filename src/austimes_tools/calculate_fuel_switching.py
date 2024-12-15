@@ -8,7 +8,7 @@ import sys
 import re
 import plotly.express as px
 from tabulate import tabulate
-
+import numpy as np
 # Configure logger
 logger.remove()  # Remove default handler
 logger.add(sys.stderr, level="INFO")  # Add handler with stderr as sink
@@ -442,8 +442,14 @@ def create_industry2_df(
                                 assert (switched["value"] >= 0).all()
                                 assert (unswitched["value"] >= 0).all()
                                 # Check we counted everything
-                                assert (switched["value"].sum()+unswitched["value"].sum())==thisyear_by_fuel.set_index("fuel")["value"].sum()
-
+                                left_sum = switched["value"].sum() + unswitched["value"].sum()
+                                right_sum = thisyear_by_fuel.set_index("fuel")["value"].sum()
+                                if not np.isclose(left_sum, right_sum, rtol=1e-8):
+                                    print(f"Left side: {left_sum}")
+                                    print(f"Right side: {right_sum}")
+                                    print(f"Difference: {left_sum - right_sum}")
+                                    logger.error("Fuel switching totals do not match within the relative tolerance")
+                                    raise ValueError("Fuel switching totals do not match within the relative tolerance")
                                 print("---")
 
                             elif len(from_fuels) == 1 and len(to_fuels) > 1:
