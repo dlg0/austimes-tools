@@ -357,61 +357,85 @@ def create_industry2_df(
                             from_fuels = diff_switch_fuels[diff_switch_fuels["value"] < 0]
                             to_fuels = diff_switch_fuels[diff_switch_fuels["value"] > 0]
 
+                            # get the fractional version of the to_fuels
+                            to_fuels_fraction = to_fuels.copy()
+                            to_fuels_fraction["value"] = to_fuels["value"] / to_fuels["value"].sum()
+
                             #logger.info( f"base year:\n{tabulate(baseyear_group_consumption_pj, headers='keys', tablefmt='pretty', showindex=False)}")
                             #logger.info( f"base year fuel:\n{tabulate(baseyear_by_fuel, headers='keys', tablefmt='pretty', showindex=False)}")
                             logger.info( f"this year:\n{tabulate(thisyear_group_consumption_pj, headers='keys', tablefmt='pretty', showindex=False)}")
                             #logger.info( f"this year fuel:\n{tabulate(thisyear_by_fuel, headers='keys', tablefmt='pretty', showindex=False)}")
                             #logger.info( f"baseline fuel:\n{tabulate(baseline_fuel_mix, headers='keys', tablefmt='pretty', showindex=False)}")
                             logger.info( f"diff:\n{tabulate(diff, headers='keys', tablefmt='pretty', showindex=False)}")
-                            logger.info( f"diff switch fuels:\n{tabulate(diff_switch_fuels, headers='keys', tablefmt='pretty', showindex=False)}")
+                            logger.info( f"diff switch fuels:\n{tabulate(diff_switch_fuels.reset_index(), headers='keys', tablefmt='pretty', showindex=False)}")
                             #logger.info(f"Switch fuels: {switch_fuels}")
- 
-                            final_switch = thisyear_group_consumption_pj.copy().groupby("fuel", as_index=False).sum().drop(columns=["process"])
-                            final_switch["entry_type"] = "fuel-switch"
-                            final_switch["fuel-switched-from"] = final_switch["fuel"]
-                            final_switch["fuel-switched-to"] = final_switch["fuel"]
-                            final_switch.set_index("fuel", inplace=True)
-                            final_switch = final_switch[["scen","region","subsector_p","year","fuel-switched-from","fuel-switched-to","value","entry_type"]]
-                            final_remain = final_switch.copy()
-                            final_remain["entry_type"] = "remaining-consumption"
-                            final_switch["value"] = 0.0 
 
-                            if len(from_fuels) == 1 and len(to_fuels) == 1:
-                                logger.info("GOOD FUEL SWITCH")
-                                from_fuel = from_fuels.reset_index()["fuel"].values[0]
-                                to_fuel = to_fuels.reset_index()["fuel"].values[0]
-                                final_switch.loc[from_fuel, "fuel-switched-from"] = from_fuel
-                                final_switch.loc[from_fuel, "fuel-switched-to"] = to_fuel
-                                # add the value to the switch (the strange efficiency-like difference numbers mean we're doing this)
-                                value_to_switch = max(-final_remain.loc[to_fuel, "value"],diff_switch_fuels.loc[from_fuel, "value"])
-                                final_switch.loc[from_fuel, "value"] -= value_to_switch
-                                # remove the value from the remain
-                                final_remain.loc[to_fuel, "value"] += value_to_switch
-                                logger.info(f"Switching {value_to_switch} from {from_fuel} to {to_fuel}")
-                                logger.info(f"Final switch:\n{tabulate(final_switch, headers='keys', tablefmt='pretty', showindex=False)}")
-                                logger.info(f"Final remain:\n{tabulate(final_remain, headers='keys', tablefmt='pretty', showindex=False)}")
+                            # this block just creates the switched and unswitched dataframes with the default being zero switched and all unswitched
+                            switched = thisyear_group_consumption_pj.copy().groupby("fuel", as_index=False).sum().drop(columns=["process"])
+                            switched["entry_type"] = "fuel-switch"
+                            switched["fuel-switched-from"] = switched["fuel"]
+                            switched["fuel-switched-to"] = switched["fuel"]
+                            switched.set_index("fuel", inplace=True)
+                            switched = switched[["scen","region","subsector_p","year","fuel-switched-from","fuel-switched-to","value","entry_type"]]
+                            unswitched = switched.copy()
+                            unswitched["entry_type"] = "remaining-consumption"
+                            switched["value"] = 0.0 
+
+                            if len(from_fuels) == 1 and len(to_fuels) >= 1:
+                                logger.info(f"GOOD FUEL SWITCH: {len(from_fuels)} FROM, {len(to_fuels)} TO")
+                                for to_fuel in to_fuels.reset_index()["fuel"].values:
+
+                                    from_fuel = from_fuels.reset_index()["fuel"].values[0]
+                                    total_to_switch_value = -diff_switch_fuels.loc[from_fuel, "value"]
+                                    this_fraction = to_fuels_fraction.loc[to_fuel, "value"]
+                                    try_to_switch_value = total_to_switch_value*this_fraction
+                                    assert try_to_switch_value > 0
+
+                                    logger.info(f"Switching {this_fraction*100:.0f}% of {total_to_switch_value:.2f} ({try_to_switch_value:.2f} PJ) of {from_fuel} to {to_fuel}")
+
+                                    switched.loc[from_fuel, "fuel-switched-from"] = from_fuel
+                                    switched.loc[from_fuel, "fuel-switched-to"] = to_fuel
+
+                                    # calculate the value to the switch (the strange efficiency-like difference numbers mean we're doing this)
+                                    avail_to_switch_value = unswitched.loc[to_fuel, "value"] # the fraction only applies to the from_fuel
+                                    value_to_switch = min(try_to_switch_value, avail_to_switch_value)
+                                    assert value_to_switch > 0
+                                    logger.info(f"Adjusted value is {value_to_switch:.2f} PJ of {from_fuel} to {to_fuel}")
+                                    # add the value to the switch
+                                    switched.loc[from_fuel, "value"] += value_to_switch
+                                    logger.info(f"Added {value_to_switch:.2f} PJ to switched {from_fuel}")
+                                    # remove the value from the remain
+                                    unswitched.loc[to_fuel, "value"] -= value_to_switch
+                                    logger.info(f"Subtracted {value_to_switch:.2f} from unswitched {to_fuel}")
+
+                                logger.info(f"Final switch:\n{tabulate(switched, headers='keys', tablefmt='pretty', showindex=False)}")
+                                logger.info(f"Final remain:\n{tabulate(unswitched, headers='keys', tablefmt='pretty', showindex=False)}")
+                                # Assert all values are positive in switched and unswitched
+                                assert (switched["value"] >= 0).all()
+                                assert (unswitched["value"] >= 0).all()
                                 # Check we counted everything
-                                assert (final_switch+final_remain)["value"].sum()==thisyear_by_fuel.set_index("fuel")["value"].sum()
+                                assert (switched+unswitched)["value"].sum()==thisyear_by_fuel.set_index("fuel")["value"].sum()
                                 print("---")
+
                             elif len(from_fuels) == 1 and len(to_fuels) > 1:
                                 logger.warning("BAD FUEL SWITCH LEVEL 1")
-                                logger.info(f"Final switch:\n{tabulate(final_switch, headers='keys', tablefmt='pretty', showindex=False)}")
-                                logger.info(f"Final remain:\n{tabulate(final_remain, headers='keys', tablefmt='pretty', showindex=False)}")
+                                logger.info(f"Final switch:\n{tabulate(switched, headers='keys', tablefmt='pretty', showindex=False)}")
+                                logger.info(f"Final remain:\n{tabulate(unswitched, headers='keys', tablefmt='pretty', showindex=False)}")
                                 print("---")
                             elif len(from_fuels) > 1 and len(to_fuels) >= 1:
                                 logger.warning("BAD FUEL SWITCH LEVEL 2")
-                                logger.info(f"Final switch:\n{tabulate(final_switch, headers='keys', tablefmt='pretty', showindex=False)}")
-                                logger.info(f"Final remain:\n{tabulate(final_remain, headers='keys', tablefmt='pretty', showindex=False)}")
+                                logger.info(f"Final switch:\n{tabulate(switched, headers='keys', tablefmt='pretty', showindex=False)}")
+                                logger.info(f"Final remain:\n{tabulate(unswitched, headers='keys', tablefmt='pretty', showindex=False)}")
                                 print("---")
                             elif len(from_fuels) > 0 and len(to_fuels) == 0:
                                 logger.info("EFFICIENCY IMPROVEMENT")
-                                logger.info(f"Final switch:\n{tabulate(final_switch, headers='keys', tablefmt='pretty', showindex=False)}")
-                                logger.info(f"Final remain:\n{tabulate(final_remain, headers='keys', tablefmt='pretty', showindex=False)}")
+                                logger.info(f"Final switch:\n{tabulate(switched, headers='keys', tablefmt='pretty', showindex=False)}")
+                                logger.info(f"Final remain:\n{tabulate(unswitched, headers='keys', tablefmt='pretty', showindex=False)}")
                                 print("---")
                             else:
                                 logger.info("NO CHANGE")
-                                logger.info(f"Final switch:\n{tabulate(final_switch, headers='keys', tablefmt='pretty', showindex=False)}")
-                                logger.info(f"Final remain:\n{tabulate(final_remain, headers='keys', tablefmt='pretty', showindex=False)}")
+                                logger.info(f"Final switch:\n{tabulate(switched, headers='keys', tablefmt='pretty', showindex=False)}")
+                                logger.info(f"Final remain:\n{tabulate(unswitched, headers='keys', tablefmt='pretty', showindex=False)}")
                                 print("---")
  
                             
