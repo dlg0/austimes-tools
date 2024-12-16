@@ -14,13 +14,14 @@ logger.remove()  # Remove default handler
 logger.add(sys.stderr, level="INFO")  # Add handler with stderr as sink
 
 ind2_varbl_process_mapping = {
-    "Alumina": "UCrepI_Activity-Al",
-    "Aluminum": "UCrepI_Activity-Alum",
+    "Alumina": "UCrepI_Activity-Alum",
+    "Aluminum": "UCrepI_Activity-Al",
     "Cement+": "UCrepI_Activity-Cem",
     "PetChem": "UCrepI_Activity-Che",
     "Iron and Steel": "UCrepI_Activity-IronSteel",
 }
 ind2_output_varbls = list(ind2_varbl_process_mapping.values())
+extra_ind2_output_varbls = ["UCrepI_Activity-Che-ammonia", "UCrepI_Activity-Che-methanol"]
 
 IND2_process_name_col = "commodity"
 IND2_process_prefix = "IND2"
@@ -260,9 +261,14 @@ def get_to_fuel(supply_process: str, from_fuel: str) -> tuple[str, str]:
 
 
 def create_industry2_df(
-    df: pd.DataFrame, years: list[str], csv_cols: list[str]
+    df: pd.DataFrame, years: list[str], csv_cols: list[str], input_dir: Path
 ) -> pd.DataFrame:
     _cols = ["scen", "region", "subsector_p"]
+
+    # check if pickle exists
+    pickle_path = input_dir / "ind2-fuel-switch.pkl"
+    if pickle_path.exists():
+        return pd.read_pickle(pickle_path)
 
     # find all entries of df["fuel] == "Natural gas" and set them to "Natural Gas"
     df.loc[df["fuel"] == "Natural gas", "fuel"] = "Natural Gas"
@@ -272,17 +278,14 @@ def create_industry2_df(
     # melt the dataframe
     all_cols_not_years = [col for col in df.columns if col not in years]
 
-    consumption_pj = df[
-        (df["varbl"].isin(["FinEn_consumed"]) & (df["is_ind2_p"].isin(["yes"])))
-    ]
-    consumption_pj = consumption_pj.melt(
-        id_vars=all_cols_not_years, value_vars=years, var_name="year"
-    )
-    consumption_pj = (
-        consumption_pj.groupby(all_cols_not_years + ["year"]).sum().reset_index()
-    )
+    #consumption_pj = df[
+    #    (df["varbl"].isin(["FinEn_consumed"]) & (df["is_ind2_p"].isin(["yes"])))
+    #]
+    consumption_pj = df[ df["varbl"].isin(["FinEn_consumed"])]
+    consumption_pj = consumption_pj.melt( id_vars=all_cols_not_years, value_vars=years, var_name="year")
+    consumption_pj = consumption_pj.groupby(all_cols_not_years + ["year"]).sum().reset_index()
 
-    production_mt = df[df["varbl"].isin(ind2_output_varbls)]
+    production_mt = df[df["varbl"].isin(ind2_output_varbls+extra_ind2_output_varbls)]
     production_mt = production_mt.melt(id_vars=all_cols_not_years, value_vars=years, var_name="year")
     production_mt = (production_mt.groupby(all_cols_not_years + ["year"]).sum().reset_index())
 
@@ -290,6 +293,46 @@ def create_industry2_df(
 
     consumption_pj = consumption_pj[cols_to_keep]
     production_mt = production_mt[cols_to_keep].copy()
+
+    # Group by all columns except 'varbl' and 'value' to maintain the structure
+    grouping_cols = [col for col in production_mt.columns if col not in ['varbl', 'value']]
+
+    # Get the ammonia and methanol values, maintaining the structure
+    ammonia_mt = production_mt[production_mt['varbl'] == 'UCrepI_Activity-Che-ammonia'].copy()
+    methanol_mt = production_mt[production_mt['varbl'] == 'UCrepI_Activity-Che-methanol'].copy()
+
+    # Log the totals of the ammonia and methanol
+    logger.info(f"Ammonia MT: {ammonia_mt['value'].sum()}")
+    logger.info(f"Methanol MT: {methanol_mt['value'].sum()}")
+
+    # Sum the totals for verification
+    ammonia_total = ammonia_mt['value'].sum()
+    methanol_total = methanol_mt['value'].sum()
+
+    # Add methanol values to matching ammonia rows
+    ammonia_mt_with_methanol = ammonia_mt.copy()
+    ammonia_mt_with_methanol.set_index(grouping_cols, inplace=True)
+    methanol_mt.set_index(grouping_cols, inplace=True)
+
+    # Add the methanol values to the corresponding ammonia rows
+    ammonia_mt_with_methanol['value'] += methanol_mt['value']
+
+    # Reset index and rename varbl to UCrepI_Activity-Che
+    ammonia_mt_with_methanol.reset_index(inplace=True)
+    ammonia_mt_with_methanol['varbl'] = 'UCrepI_Activity-Che'
+
+    # Remove original ammonia and methanol rows and add the combined rows
+    production_mt = production_mt[~production_mt['varbl'].isin(['UCrepI_Activity-Che-ammonia', 'UCrepI_Activity-Che-methanol'])]
+    production_mt = pd.concat([production_mt, ammonia_mt_with_methanol])
+
+    # Verify the totals match
+    che_total = production_mt[production_mt['varbl'] == 'UCrepI_Activity-Che']['value'].sum()
+    assert np.isclose(che_total, ammonia_total + methanol_total), f"Che total: {che_total} is not equal to the sum of ammonia and methanol: {ammonia_total + methanol_total}"
+
+    # Log the totals
+    logger.info(f"Che total: {che_total}")
+    logger.info(f"Sum of ammonia and methanol: {ammonia_total + methanol_total}")
+
     # Create reverse mapping once outside the loop
     rev_mapping = {v: k for k, v in ind2_varbl_process_mapping.items()}
     # Use vectorized operation to set the subsector_p column
@@ -302,7 +345,8 @@ def create_industry2_df(
     scenarios = consumption_pj["scen"].unique()
     regions = consumption_pj["region"].unique()
 
-    # melt the dataframe
+    final_df = pd.DataFrame()
+
     for scen in scenarios:
         scen_consumption_pj = consumption_pj[consumption_pj["scen"] == scen]
         scen_production_mt = production_mt[production_mt["scen"] == scen]
@@ -314,6 +358,11 @@ def create_industry2_df(
             for subsector in subsectors:
                 sector_production_mt = region_production_mt[region_production_mt["subsector_p"] == subsector]
                 sector_consumption_pj = region_consumption_pj[region_consumption_pj["subsector_p"] == subsector]
+
+                if len(sector_production_mt) == 0:
+                    logger.warning(f"No production found for {scen} {region} {subsector}")
+                    assert len(sector_consumption_pj) == 0
+                    continue
 
                 for year in years:
 
@@ -330,17 +379,129 @@ def create_industry2_df(
 
                     multi_to_multi_rules = {"blr": [("Coal","Electricity"),("Natural Gas","Hydrogen")]}
 
+                    # this is a list of tuples, where the first element is the process group and the second element is the process group typeo
+                    # if we need to add a negative match, then the first element of the group is a tuple where the second element is the negative match
+                    subsector_process_groups = {
+                        "Alumina": [
+                            #((["blr"],[]),"fossil"),
+                            #((["calcination"],[]),"fossil"),
+                            #((["mining"],[]),"fossil"),
+                            #((["bayer"],[]),"fossil"),
+                            ((["all","blr","calcination","mining","bayer"],[]),"fossil"),
+                        ],
+                        "Aluminum": [
+                            #((["blr"],[]),"fossil"),
+                            #((["calcination"],[]),"fossil"),
+                            #((["hall"],[]),"fossil"),
+                            #((["coking"],[]),"fossil"),
+                            #((["distillation"],[]),"fossil"),
+                            #((["anode"],["hall"]),"fossil"),
+                            ((["all","hall","coking","distillation","anode"],[]),"fossil"),
+                        ],
+                        "Iron and Steel 2": [
+                            # iron
+                            ((["dri"],["pelletizing","cooling","reformer","sintering"]),"fossil"),
+                            ((["cooling"],[]),"fossil"),
+                            ((["pelletizing"],["stl"]),"fossil"),
+                            ((["sintering"],[]),"fossil"),
+                            ((["excavators"],[]),"fossil"),
+                            ((["beneficiation"],[]),"fossil"),
+                            ((["crushers"],[]),"fossil"),
+                            # steel
+                            ((["casting"],[]),"fossil"),
+                            ((["furnace"],["ladle"]),"fossil"),
+                            ((["bof","ladle"],[]),"fossil"),
+                            ((["coke"],[]),"fossil"),
+                            ((["bf"],[]),"fossil"),
+                            ((["grate"],[]),"fossil"),
+                        ],
+                        "Iron and Steel 2": [ # the above does not work because DRI replaces some of the other processes? 
+                            # simplified iron
+                            ((["iron","dri","cooling","pelletizing","sintering","excavators","beneficiation","crushers"],[]),"fossil"),
+                            # simplified steel
+                            ((["steel", "casting","furnace","bof","ladle","coke","bf","grate"],[]),"fossil"),
+                        ],
+                        "Iron and Steel": [ # the above does not work because DRI replaces some of the other processes? 
+                            # simplified iron
+                            ((["all","dri","cooling","pelletizing","sintering","excavators","beneficiation","crushers","steel", "casting","furnace","bof","ladle","coke","bf","grate"],[]),"fossil"),
+                        ],
+                        "Cement+": [
+                            #((["blr"],[]),"fossil"),
+                            #((["soda ash"],[]),"fossil"),
+                            #((["kiln"],[]),"fossil"),
+                            #((["mill"],["milling"]),"fossil"),
+                            #((["precalcination"],[]),"fossil"),
+                            #((["ball milling","jet milling"],[]),"fossil"),
+                            #((["drying"],[]),"fossil"),
+                            #((["crushing"],[]),"fossil"),
+                            #((["extrusion"],[]),"fossil"),
+                            #((["pressing"],[]),"fossil"),
+                            #((["molding"],[]),"fossil"),
+                            #((["casting"],[]),"fossil"),
+                            #((["mixing"],[]),"fossil"),
+                            #((["fiberizing"],[]),"fossil"),
+                            #((["annealing"],[]),"fossil"),
+                            #((["attenuation"],[]),"fossil"),
+                            #((["bath"],[]),"fossil"),
+                            #((["furnace"],[]),"fossil"),
+                            #((["nnpb"],[]),"fossil"),
+                            #((["blow"],[]),"fossil"),
+                            #((["spinning"],[]),"fossil"),
+                            ((["all","soda ash","kiln","mill","precalcination","ball milling","jet milling","drying","crushing","extrusion","pressing","molding","casting","mixing","fiberizing","annealing","attenuation","bath","furnace","nnpb","blow","spinning"],[]),"fossil"),
+                        ],
+                        "PetChem": [
+                            #((["hydrogen","naptha","co process","cell process","dehydrogenation","steam cracking"],["blr"]),"fossil"),
+                            #((["blr"],[]),"fossil"),
+                            #((["cell process"],[]),"fossil"),
+                            #((["ammonia"],[]),"fossil"),
+                            #((["methanol"],[]),"fossil"),
+                            #((["urea"],[]),"fossil"),
+                            #((["other","2-eh","acet","polymerization","process","edc","emul","ethyl","fract","hdpe","hda","hydrotreating","isobut","ldpe","liquid","lldpe","oxyc","pdh","propg","pvc","tdp","vcm","zieg"],[]),"fossil"),
+                            ((["all","blr","hydrogen","naptha","co process","cell process","dehydrogenation","steam cracking","ammonia","methanol","urea","other","2-eh","acet","polymerization","process","edc","emul","ethyl","fract","hdpe","hda","hydrotreating","isobut","ldpe","liquid","lldpe","oxyc","pdh","propg","pvc","tdp","vcm","zieg"],[]),"fossil"),
+                        ],
+                    }
+
+                    # TODO: Do a check to see if there are any processes either in the baseyear or thisyear that are not in the subsector_process_groups
+                    #baseyear_process_groups = baseyear_consumption_pj["process"].unique()
+                    #thisyear_process_groups = thisyear_consumption_pj["process"].unique()
+                    #all_process_groups = np.unique(baseyear_process_groups + thisyear_process_groups)
+                    #for process_group in all_process_groups:
+                    #    if process_group not in subsector_process_groups[subsector]:
+                    #        logger.warning(f"Process group {process_group} not found in subsector {subsector}")
+
+
                     # Get baseline fuel mix
-                    if subsector == "Alumina":
-                        electrification_strings = ["electric"]
-                        process_groups = [("blr","fossil")] #[("calcination","fossil"), ("mining","fossil")] #, ("blr","blr"), ("bayer","heat")]
+                    if subsector in ["Alumina", "Aluminum", "Iron and Steel", "Cement+", "PetChem"]:
+                        process_groups = subsector_process_groups[subsector]
                         for process_group, process_group_type in process_groups:
                             logger.info("==================================================================================================")
                             logger.info(f"Processing group: {process_group}")
                             logger.info("==================================================================================================")
                             # get the process group
-                            baseyear_group_consumption_pj = baseyear_consumption_pj[ baseyear_consumption_pj["process"].str.lower().str.contains(process_group)]
-                            thisyear_group_consumption_pj = thisyear_consumption_pj[ thisyear_consumption_pj["process"].str.lower().str.contains(process_group)]
+                            # Generalized to work with the new form of the subsector_process_groups
+                            if isinstance(process_group, tuple):
+                                # Extract the lists of strings to match and not to match
+                                match_strings, not_match_strings = process_group
+                                # Create masks for both DataFrames separately
+                                baseyear_mask = baseyear_consumption_pj["process"].str.lower().str.contains("|".join(match_strings))
+                                thisyear_mask = thisyear_consumption_pj["process"].str.lower().str.contains("|".join(match_strings))
+                                
+                                # Apply not_match conditions
+                                for not_match in not_match_strings:
+                                    baseyear_mask &= ~baseyear_consumption_pj["process"].str.lower().str.contains(not_match)
+                                    thisyear_mask &= ~thisyear_consumption_pj["process"].str.lower().str.contains(not_match)
+                                
+                                # Apply the masks
+                                baseyear_group_consumption_pj = baseyear_consumption_pj[baseyear_mask]
+                                thisyear_group_consumption_pj = thisyear_consumption_pj[thisyear_mask]
+                                process_group = process_group[0][0]  # Update process_group to the first element of the first tuple element
+                            else:
+                                baseyear_group_consumption_pj = baseyear_consumption_pj[ baseyear_consumption_pj["process"].str.lower().str.contains(process_group)]
+                                thisyear_group_consumption_pj = thisyear_consumption_pj[ thisyear_consumption_pj["process"].str.lower().str.contains(process_group)]
+                            # if the baseyear_group_consumption_pj is empty, continue and log a warning
+                            if baseyear_group_consumption_pj.empty:
+                                logger.warning(f"No consumption found for {scen} {region} {subsector} {process_group}")
+                                continue
 
                             baseyear_by_fuel = baseyear_group_consumption_pj.groupby("fuel", as_index=False).sum().drop(columns=["scen","region","process","subsector_p","year"])
                             thisyear_by_fuel = thisyear_group_consumption_pj.groupby("fuel", as_index=False).sum().drop(columns=["scen","region","process","subsector_p","year"])
@@ -367,8 +528,8 @@ def create_industry2_df(
                             from_fuels_fraction = from_fuels.copy()
                             from_fuels_fraction["value"] = from_fuels["value"] / from_fuels["value"].sum()
 
-                            #logger.info( f"base year:\n{tabulate(baseyear_group_consumption_pj, headers='keys', tablefmt='pretty', showindex=False)}")
-                            #logger.info( f"base year fuel:\n{tabulate(baseyear_by_fuel, headers='keys', tablefmt='pretty', showindex=False)}")
+                            logger.info( f"base year:\n{tabulate(baseyear_group_consumption_pj, headers='keys', tablefmt='pretty', showindex=False)}")
+                            logger.info( f"base year fuel:\n{tabulate(baseyear_by_fuel, headers='keys', tablefmt='pretty', showindex=False)}")
                             logger.info( f"this year:\n{tabulate(thisyear_group_consumption_pj, headers='keys', tablefmt='pretty', showindex=False)}")
                             logger.info( f"this year fuel:\n{tabulate(thisyear_by_fuel, headers='keys', tablefmt='pretty', showindex=False)}")
                             logger.info( f"baseline fuel:\n{tabulate(baseline_fuel_consumption, headers='keys', tablefmt='pretty', showindex=False)}")
@@ -383,7 +544,8 @@ def create_industry2_df(
                             switched["fuel-switched-to"] = switched["fuel"]
                             switched["process-group"] = subsector.lower() + "-" + process_group
                             switched.set_index("fuel", inplace=True)
-                            switched = switched[["scen","region","subsector_p","process-group","year","fuel-switched-from","fuel-switched-to","value","entry_type"]]
+                            final_cols = ["scen","region","subsector_p","process-group","year","fuel-switched-from","fuel-switched-to","value","entry_type"]
+                            switched = switched[final_cols]
                             unswitched = switched.copy()
                             unswitched["entry_type"] = "remaining-consumption"
                             switched["value"] = 0.0 
@@ -419,7 +581,19 @@ def create_industry2_df(
 
                             multi_to_multi = (len(from_fuels) > 1 and len(to_fuels) > 1)
 
-                            if (len(from_fuels) == 1 and len(to_fuels) >= 1) or (len(from_fuels) > 1 and len(to_fuels) == 1) or multi_to_multi:
+                            good_baseyear = True
+                            if baseyear_production_mt <= 1e-3:
+                                good_baseyear = False
+                                logger.warning(f"Base year production is too small for {scen} {region} {subsector} {process_group}")
+                                logger.warning(f"Base year production: {baseyear_production_mt}")
+                                logger.warning(f"Base year consumption: {baseyear_consumption_pj}")
+                                logger.warning(f"This year production: {thisyear_production_mt}")
+                                logger.warning(f"This year consumption: {thisyear_consumption_pj}")
+                                logger.info(f"switched:\n{tabulate(switched.reset_index()[final_cols], headers='keys', tablefmt='pretty', showindex=False)}")
+                                logger.info(f"unswitched:\n{tabulate(unswitched[final_cols], headers='keys', tablefmt='pretty', showindex=False)}")
+                                print("---")
+
+                            if ((len(from_fuels) == 1 and len(to_fuels) >= 1) or (len(from_fuels) > 1 and len(to_fuels) == 1) or multi_to_multi) and good_baseyear: # TODO: or (len(from_fuels) > 0 and len(to_fuels) == 0):
                                 logger.info(f"GOOD FUEL SWITCH: {len(from_fuels)} FROM, {len(to_fuels)} TO")
                                 for from_fuel in from_fuels.reset_index()["fuel"].values:
                                     for to_fuel in to_fuels.reset_index()["fuel"].values:
@@ -427,12 +601,14 @@ def create_industry2_df(
                                         fraction_of_from_fuel = to_fuels_fraction.loc[to_fuel, "value"]
                                         fraction_of_to_fuel = from_fuels_fraction.loc[from_fuel, "value"]
  
-                                        if multi_to_multi:
-                                            # when there is no way to split the fuel, we just assume some rules
-                                            fraction_of_from_fuel = 1.0
-                                            fraction_of_to_fuel = 1.0
-                                            if (from_fuel, to_fuel) not in multi_to_multi_rules[process_group]:
-                                                continue
+                                        #if multi_to_multi:
+                                        #    # when there is no way to split the fuel, we just assume some rules
+                                        #    fraction_of_from_fuel = 1.0
+                                        #    fraction_of_to_fuel = 1.0
+                                        #    if (from_fuel, to_fuel) not in multi_to_multi_rules[process_group]:
+                                        #        
+                                        #        logger.error(f"No way to split fuel {from_fuel} to {to_fuel} for process group {process_group}")
+                                        #        raise ValueError(f"No way to split fuel {from_fuel} to {to_fuel} for process group {process_group}")
 
                                         all_to_fuel_switched_value = -diff_switch_fuels.loc[from_fuel, "value"]
                                         from_switched_value = all_to_fuel_switched_value*fraction_of_from_fuel
@@ -471,8 +647,12 @@ def create_industry2_df(
                                 # Drop rows with zero value in switched
                                 switched = switched[switched["value"] != 0]
 
-                                logger.info(f"switched:\n{tabulate(switched.reset_index(), headers='keys', tablefmt='pretty', showindex=False)}")
-                                logger.info(f"unswitched:\n{tabulate(unswitched.reset_index(), headers='keys', tablefmt='pretty', showindex=False)}")
+                                logger.info(f"switched:\n{tabulate(switched.reset_index()[final_cols], headers='keys', tablefmt='pretty', showindex=False)}")
+                                logger.info(f"unswitched:\n{tabulate(unswitched[final_cols], headers='keys', tablefmt='pretty', showindex=False)}")
+
+                                # Set any values within an atol of 1e-12 to zero
+                                switched.loc[np.isclose(switched["value"], 0, atol=1e-12), "value"] = 0
+                                unswitched.loc[np.isclose(unswitched["value"], 0, atol=1e-12), "value"] = 0
 
                                 # Assert all values are positive in switched and unswitched
                                 assert (switched["value"] >= 0).all()
@@ -486,7 +666,6 @@ def create_industry2_df(
                                     print(f"Difference: {left_sum - right_sum}")
                                     logger.error("Fuel switching totals do not match within the relative tolerance")
                                     raise ValueError("Fuel switching totals do not match within the relative tolerance")
-                                print("---")
 
                             elif len(from_fuels) == 1 and len(to_fuels) > 1:
                                 logger.warning("BAD FUEL SWITCH LEVEL 1")
@@ -508,203 +687,18 @@ def create_industry2_df(
                                 logger.info(f"Final switch:\n{tabulate(switched, headers='keys', tablefmt='pretty', showindex=False)}")
                                 logger.info(f"Final remain:\n{tabulate(unswitched, headers='keys', tablefmt='pretty', showindex=False)}")
                                 print("---")
- 
-                            
 
-                            # remove rows with 0 value from process group
-                            #process_group_consumption_pj = process_group_consumption_pj[ process_group_consumption_pj["value"] != 0 ]
-                            # get the electrification processes
-                            electrification_processes = thisyear_group_consumption_pj[
-                                thisyear_group_consumption_pj["process"]
-                                .str.lower()
-                                .str.contains("|".join(electrification_strings))
-                            ]
-                            #if electrification_processes.empty:
-                            if True:
-                                #logger.info( f"No electrification found in {subsector}:{process_group} group")
-                                print("---")
-                            else:
-                                logger.info(f"Electrification found in {subsector}:{process_group} group")
-                                # check if all consumption is in the electric process
-                                if process_group_consumption_pj.equals(electrification_processes):
-                                    logger.info( f"All consumption is in the electric process for {scen} {region} {subsector}")
-                                else:
-                                    logger.error( f"The electrification process is not the only process for {scen} {region} {subsector}")
-                                logger.info( f"Process group:\n{tabulate(process_group_consumption_pj, headers='keys', tablefmt='pretty', showindex=False)}")
+                            final_df = pd.concat([final_df, switched.reset_index()[final_cols], unswitched.reset_index()[final_cols]])
+                            print("---")
 
                         print("---")
 
+    # save the final_df to a csv
+    final_df.to_csv(input_dir / "ind2-fuel-switch.csv", index=False)
+    # save as a pickle
+    final_df.to_pickle(input_dir / "ind2-fuel-switch.pkl")
 
-    # Create the growth for the industry2 sector
-    growth = df[df["is_ind2_p"] == "yes"]
-    growth = growth[growth["varbl"].isin(["feedstock_consumption"])]
-    growth = growth[_cols + years]
-    # melt the dataframe
-    growth = growth.melt(id_vars=_cols, value_vars=years, var_name="year")
-    # group by the scenario, region, subsector_p and year and sum the value
-    growth = growth.groupby(_cols + ["year"]).sum().reset_index()
-    # pivot back to wide format
-    growth = growth.pivot(index=_cols, columns="year", values="value").reset_index()
-    # for each row, divide all year columns by the 2025 column
-    for index, row in growth.iterrows():
-        baseline_value = row[years[0]]
-        for year in years:
-            row[year] = row[year] / baseline_value
-        growth.loc[index] = row
-
-    # Create the growth for the industry2 sector based on only the specific commodity production
-    growth2 = df[df["is_ind2_p"] == "yes"]
-    growth2 = growth2[growth2["varbl"].isin(ind2_varbl_process_mapping.keys())]
-    growth2 = growth2[_cols + years]
-    # melt the dataframe
-    growth2 = growth2.melt(id_vars=_cols, value_vars=years, var_name="year")
-    # group by the scenario, region, subsector_p and year and sum the value
-    growth2 = growth2.groupby(_cols + ["year"]).sum().reset_index()
-    # pivot back to wide format
-    growth2 = growth2.pivot(index=_cols, columns="year", values="value").reset_index()
-    # for each row, divide all year columns by the 2025 column
-    for index, row in growth2.iterrows():
-        baseline_value = row[years[0]]
-        for year in years:
-            # log the row
-            logger.info(f"Row: {row}")
-            logger.info(
-                f"Year: {year}, Value: {row[year]}, Baseline Value: {baseline_value}"
-            )
-            row[year] = row[year] / baseline_value
-        growth2.loc[index] = row
-
-    # Create a group for each scen, region, subsector_p and year and then iterate through each group
-    grouped = growth2.groupby(_cols)
-    for index, group in grouped:
-        print(index)
-        print(group)
-        print("---")
-
-    # Create the baseline fuel consumption of the industry2 sector
-    actual = df[df["is_ind2_p"] == "yes"]
-    actual = actual[
-        actual["varbl"].isin(["FinEn_consumed"])
-        & ~actual["subsector_p"].isin(["Feed Stock"])
-    ]
-    actual = actual[_cols + ["fuel"] + years]
-    actual = actual.groupby(_cols + ["fuel"], as_index=False).sum()
-    # set all year columns equal to the first year
-    baseline = actual.copy()
-    for year in years:
-        baseline[year] = baseline[years[0]]
-    # group by the scenario, region, subsector_p and transform by dividing by the sum of the groupby
-    grouped = baseline.groupby(_cols)
-    for index, group in grouped:
-        print(index)
-        this_growth = growth.set_index(_cols).loc[index]
-        mask = (baseline[_cols] == index).all(axis=1)
-        for year in years:
-            group[year] = group[year] * this_growth[year]
-        baseline.loc[mask] = group
-        print(group.to_string())
-        print(baseline.loc[mask].to_string())
-        print("---")
-
-    # create a change dataframe, where the year columns are the difference between the actual and baseline
-    change = actual.copy()
-    for year in years:
-        change[year] = actual[year] - baseline[year]
-
-    change_long = change.melt(
-        id_vars=_cols + ["fuel"], value_vars=years, var_name="year"
-    )
-    actual_long = actual.melt(
-        id_vars=_cols + ["fuel"], value_vars=years, var_name="year"
-    )
-    baseline_long = baseline.melt(
-        id_vars=_cols + ["fuel"], value_vars=years, var_name="year"
-    )
-
-    # write the change, actual, and baseline to csv
-    change_long.to_csv("change.csv", index=False)
-    actual_long.to_csv("actual.csv", index=False)
-    baseline_long.to_csv("baseline.csv", index=False)
-
-    # create empty df for fuel switching results with the following columns:
-    df_fuel_switch_all = pd.DataFrame(columns=csv_cols + ["value"])
-    # for each row in change_long, create a new row in df_fuel_switch_all
-    grouped = change_long.groupby(_cols)
-    for index, group in grouped:
-        print(index)
-        print(group)
-        print("---")
-
-    for index, row in change_long.iterrows():
-        change_row = row.copy()
-        actual_row = actual_long.iloc[index]
-        baseline_row = baseline_long.iloc[index]
-
-        # assert that all columns are the same except for value
-        assert all(change_row.iloc[:-1] == actual_row.iloc[:-1])
-
-        new_row = row.copy()
-
-        new_row["hydrogen_source"] = None
-        new_row["source_p"] = None
-        new_row["sector"] = "Industry"
-        new_row["process_name"] = row["subsector_p"]
-        new_row["subsectorgroup_c"] = row["subsector_p"]
-        new_row["fuel-switched-to"] = row["fuel"]
-        new_row["fuel-switched-from"] = None
-        new_row["unit"] = "PJ"
-        if new_row["fuel-switched-to"] == "Hydrogen":
-            new_row["hydrogen_source"] = "Direct supply"
-
-        baseline_value = baseline_row["value"]
-        change_value = change_row["value"]
-
-        remaining_row = new_row.copy()
-        switch_row = new_row.copy()
-
-        if change_value > 0:
-            remaining_row["value"] = baseline_value
-            switch_row["value"] = change_value
-        else:
-            remaining_row["value"] = baseline_value + change_value
-            switch_row["value"] = 0
-
-        remaining_row["entry_type"] = "remaining-consumption"
-        switch_row["entry_type"] = "fuel-switch"
-
-        if switch_row["fuel-switched-to"] == "Electricity":
-            switch_row["entry_type"] = "electrification"
-
-        # drop columns that are not in the csv_cols
-        remaining_row = remaining_row[csv_cols + ["value"]]
-        switch_row = switch_row[csv_cols + ["value"]]
-
-        df_fuel_switch_all = pd.concat(
-            [df_fuel_switch_all, pd.DataFrame([remaining_row])], ignore_index=True
-        )
-        df_fuel_switch_all = pd.concat(
-            [df_fuel_switch_all, pd.DataFrame([switch_row])], ignore_index=True
-        )
-
-    # check for duplicates (ignoring the value column)
-    if df_fuel_switch_all[csv_cols].duplicated().any():
-        logger.warning("Duplicate rows found in the dataframe")
-        # print the duplicate rows
-        print(df_fuel_switch_all[df_fuel_switch_all[csv_cols].duplicated()])
-        raise ValueError("Duplicate rows found in the dataframe")
-
-    # switch back to wide format
-    df_fuel_switch_all = df_fuel_switch_all.pivot(
-        index=[col for col in csv_cols if col != "year"], columns="year", values="value"
-    ).reset_index()
-
-    # add empty columns for "commodity", "process", "varbl", and "fuel"
-    df_fuel_switch_all["commodity"] = None
-    df_fuel_switch_all["process"] = None
-    df_fuel_switch_all["varbl"] = None
-    df_fuel_switch_all["fuel"] = None
-
-    return df_fuel_switch_all
+    return final_df
 
 
 def calculate_fuel_switching_logic(file_path: Path | str) -> None:
@@ -714,6 +708,7 @@ def calculate_fuel_switching_logic(file_path: Path | str) -> None:
         file_path: Path to the CSV or Excel file containing fuel switching data
     """
     input_path = Path(file_path).resolve()
+    input_dir = input_path.parent
     cache_path = input_path.parent / f"{input_path.stem}_cache.pkl"
 
     # Check for cached data
@@ -736,7 +731,8 @@ def calculate_fuel_switching_logic(file_path: Path | str) -> None:
             logger.warning("No industry2 output varbls found in the dataframe")
             logger.warning(f"Unique varbls: {df['varbl'].unique()}")
             logger.warning(f"ind2_output_varbls: {ind2_output_varbls}")
-            raise ValueError("No industry2 output varbls found in the dataframe")
+            logger.error(f"The missing varbls are: {set(ind2_output_varbls) - set(df['varbl'].unique())}")
+
         df = df[
             df["varbl"].isin(
                 [
@@ -746,7 +742,7 @@ def calculate_fuel_switching_logic(file_path: Path | str) -> None:
                     "FinEn_consumed",
                     "feedstock_consumption",
                 ]
-                + ind2_output_varbls
+                + ind2_output_varbls + extra_ind2_output_varbls
             )
         ]
 
@@ -761,6 +757,10 @@ def calculate_fuel_switching_logic(file_path: Path | str) -> None:
     # FinEn_consumed (p,c): Complete final energy - consumption of sector fuels. Hence, not very disaggregated for Industry and Buildings
 
     years = ["2025", "2030", "2035", "2040", "2045", "2050", "2055", "2060"]
+
+    # drop 2015 and 2020 columns
+    df = df.drop(columns=["2015", "2020"])
+
 
     cols_to_keep = [
         "scen",
@@ -798,7 +798,7 @@ def calculate_fuel_switching_logic(file_path: Path | str) -> None:
     csv_cols = cols_to_keep + new_cols + ["year"]
     df_fuel_switch_all = pd.DataFrame(columns=final_cols)
 
-    df_ind2 = create_industry2_df(df_original, years, csv_cols)
+    df_ind2 = create_industry2_df(df_original, years, csv_cols, input_dir)
 
     # Get a list of all the processes
     # Strip the `-?` or `-??` suffix and remove duplicates
@@ -807,7 +807,7 @@ def calculate_fuel_switching_logic(file_path: Path | str) -> None:
     # Loop through each process and calculate the fuel switching
 
     # sectors to process
-    sectors = []  # ["Industry", "Commercial", "Residential"]
+    sectors = ["Industry", "Commercial", "Residential"]
     sector_prefix_mapping = {
         "Industry": "ES",
         "Transport": "TR",
@@ -920,9 +920,6 @@ def calculate_fuel_switching_logic(file_path: Path | str) -> None:
 
             cnt += 1
 
-    # concat df_fuel_switch_all and df_ind2
-    df_fuel_switch_all = pd.concat([df_fuel_switch_all, df_ind2], ignore_index=True)
-
     # For ES, CS, RS we use FinEn_AEMO_eneff + FinEn_enser to get the baseline energy demand
 
     # Save output to same directory as input
@@ -969,6 +966,29 @@ def calculate_fuel_switching_logic(file_path: Path | str) -> None:
             if col not in _final_cols + ["value"]
         ]
     )
+
+    # add a unit column to df_ind2
+    df_ind2["unit"] = "PJ"
+    # add a hydrogen_source column which is "Direct supply" for any row where "fuel-switched-to" = "Hydrogen" or "fuel-switched-from" = "Hydrogen"
+    df_ind2["hydrogen_source"] = None
+    df_ind2.loc[
+        (df_ind2["fuel-switched-to"] == "Hydrogen") | (df_ind2["fuel-switched-from"] == "Hydrogen"),
+        "hydrogen_source",
+    ] = "Direct supply"
+    # rename subsector_p to subsector
+    df_ind2 = df_ind2.rename(columns={"subsector_p": "subsector"})
+    # drop rows where entry_type is "efficiency-improvement"
+    df_ind2 = df_ind2[df_ind2["entry_type"] != "efficiency-improvement"]
+
+    # rename cols of df_fuel_switch_all as process_name to process-group
+    df_fuel_switch_all = df_fuel_switch_all.rename(columns={"process_name": "process-group"})
+
+    col_order = ['scen', 'region', 'subsector', 'process-group', 'year', 'unit', 'hydrogen_source', 'fuel-switched-from', 'fuel-switched-to', 'value', 'entry_type']
+    df_ind2 = df_ind2[col_order]
+    df_fuel_switch_all = df_fuel_switch_all[col_order]
+    # concat df_fuel_switch_all and df_ind2
+    df_fuel_switch_all = pd.concat([df_fuel_switch_all, df_ind2], ignore_index=True)
+
     df_fuel_switch_all.to_csv(output_path, index=False)
     logger.info(f"Saved fuel switching calculations to: {output_path}")
 
