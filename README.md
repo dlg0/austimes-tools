@@ -22,13 +22,22 @@ This tool processes Excel files from the `data/luto/20241010` directory, extract
    ```
    This command will merge AppData JSON files for result views. You can specify the directory containing the JSON files using the `--appdata-dir` option. If not specified, the tool will look for the AppData directory relative to the script location.
 
-### Pivot CSV Files
+### Pivot raw view xlsx file (or CSV) file to wide in the year column
 
 3. To pivot a CSV file to be wide in the year column:
    ```bash
-   austimes-tools pivot-csv path/to/input.csv
+   austimes-tools pivot-year path/to/input.csv
    ```
    This command will read the CSV file, pivot it to be wide in the year column, drop the "val~den" column if present, and save the result as "input-wide.csv" in the same directory.
+
+### Fuel Switching Calculation
+
+4. To calculate fuel switching, run the following command:
+   ```bash
+   austimes-tools calculate-fuel-switching path/to/wide-raw-view.xlsx 
+   ```
+
+   Note that the wide-raw-view.xlsx file is the output of the `pivot-year` command.
 
 
 # Fuel Switching Calculation Methodology
