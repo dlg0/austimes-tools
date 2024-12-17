@@ -44,10 +44,10 @@ This tool processes Excel files from the `data/luto/20241010` directory, extract
 
 The fuel switching calculation determines how much fuel consumption which would have occured had the future production been met by the current day fuel mix is avoided. The fuel consumption which would have occured based on the current day mix of fuels is referred to as the counterfactual or baseline fuel consumption. The analysis examines the difference between the counterfactual and the model solution, and does this on an every-fuel-to-every-other-fuel basis. It reports several "entry-type"s of results (which sum to give the counterfactual energy demand). These are:
 
-1. "electrification": Electrification (specifically switching to electricity) 
-2. "fuel-switch": Fuel switching (changing from one fuel type to another)
-3. "efficiency-improvement": Fuel/energy avoided due to efficiency improvements
-4. "remaining-consumption": Refers to that part of actual (model solution) consumption unrelated to the 3 previous items. Note that this is NOT the actual consumption, only that part of actual consumption not accounted for by the 3 previous items.
+1. `electrification`: Electrification (specifically switching to electricity) 
+2. `fuel-switch`: Fuel switching (changing from one fuel type to another)
+3. `efficiency-improvement`: Fuel/energy avoided due to efficiency improvements
+4. `remaining-consumption`: Refers to that part of actual (model solution) consumption unrelated to the 3 previous items. Note that this is NOT the actual consumption, only that part of actual consumption not accounted for by the 3 previous items.
 
 All values are reported in PJ. The electrification and fuel-switch types are the PJ of the "fuel-switched-from" fuel (electrification is just a fuel-switch to electricity). The remaining-consumption type is how much of that fuel was unrelated to the fuel switching.
 
