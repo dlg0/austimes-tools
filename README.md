@@ -78,6 +78,7 @@ For each sector, the calculation:
 The heavy industry sector requires special handling. The calculation:
 
 1. Groups processes by subsector (Alumina, Aluminum, Cement+, PetChem, Iron and Steel)
+   - Note that there is the option to group at a much finer granularity (e.g., by processes which provide calcination), and that is likely more appropriate for the future, but we'd have to ensure all technologies which provide the equivalent version of a production route are in the same group, and for iron and steel this is presently not obvious - hence the more coarse grouping.
 2. For regions where there is present day production, scales the present day fuel mix 
    - Note that for regions where there is no present day production - which only occurs for Iron & Steel, there is no fuel switching
 3. Differences the baseline and actual for each process group
