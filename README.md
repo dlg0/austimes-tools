@@ -89,16 +89,16 @@ The heavy industry sector requires special handling. The calculation:
 
 ## Output Structure
 
-Results are provided in a table with the following columns:
+Results are provided in a tall format table with the following columns:
 
 - `scen`: The scenario name
 - `region`: The region name
-- `sector`: The subsector group name
-- `hydrogen_source`: The hydrogen source (if applicable)
-- `unit`: The unit of measure
-- `from_fuel`: The original fuel type
-- `to_fuel`: The new fuel type
-- `process`: The process/sector where switch occurred
-- `entry_type`: The type of change (remaining consumption, fuel switch, or electrification)
-- `value`: The quantity of energy affected
+- `subsector`: The subsector group name
+- `process-group`: The process or process group name
 - `year`: The year of change
+- `unit`: The unit of measure
+- `hydrogen_source`: The hydrogen source (if applicable)
+- `fuel-switch-from`: The original fuel type
+- `fuel-switch-to`: The new fuel type
+- `value`: The quantity of energy affected
+- `entry_type`: The type of change (remaining consumption, fuel switch, or electrification)
